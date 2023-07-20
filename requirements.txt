@@ -2,7 +2,6 @@ scanimage-tiff-reader
 numpy
 scikit-image
 scipy
-numpy
 napari
 opencv-python
 pandas

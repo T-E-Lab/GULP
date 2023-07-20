@@ -3,71 +3,25 @@ import tifffile as tf
 import numpy as np
 from skimage.registration import phase_cross_correlation
 from scipy.ndimage import fourier_shift, gaussian_filter
-import numpy as np
 import math
 import napari
 from napari.settings import SETTINGS # Changed from from napari.utils.settings import SETTINGS
 SETTINGS.application.ipy_interactive = False
-import cv2 as cv
-import time
-import pandas as pd
-from pathlib import Path
-import os
-from os import listdir
-from os.path import sep, exists
 from matplotlib import pyplot as plt
-import math
-import pickle
-from datetime import datetime
-import tkinter as tk
-from tkinter import filedialog
-
-
-def loadFileNames(single_file=False):
-    """Prompt user to select one or multiple files
-
-    Returns:
-        list: list of filenames of trials
-    """
-
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", 1)
-
-    if single_file:
-        trial_file_nms = filedialog.askopenfilename(title="Select files")
-    else:
-        trial_file_nms = filedialog.askopenfilenames(title="Select files")
-    return trial_file_nms
-
-def loadTrialInfo(rootDirs):
-    """
-    Gets the experiment and trial information for calcium imaging experiments
-
-    Arguments:
-        rootDir = the root directories. Each directory should contain a series of subdirectories
-        with the dates of the data collection
-
-    Returns:
-        trials = a dictionary of all of the trial information keyed by the name of each experiment
-    """
-
-    trials = dict()
-    for d in rootDirs:
-        dates = listdir(d)
-        for dt in dates:
-            if dt == '.DS_Store':
-                continue
-            files_here = listdir(sep.join([d,dt]))
-            expts_here = list(set(
-                ["_".join(sep.join([d,dt,f]).split('_')[0:-2]) for f in files_here if ('tif' in f)]))
-            for e in expts_here:
-                trials[e] = sorted([sep.join([d,dt,f]) for f in files_here if (('tif' in f) & (e.split(sep)[-1] in f))])
-
-    return trials
 
 def loadTif(path):
     """ Load in a Scan Image tiff from the specified path
+    
+    Returns:
+        stack: the imaging data in dimensions of 
+            0: # of volumes
+            1: # of frames per volume
+            2: # of channels
+            3: width
+            4: height
+        nCh: # of channels
+        nDiscardFBFrames: # of frames discarded during fly back
+        fpv: frames per volume
     """
 
     # Make a tiff reader object
@@ -83,9 +37,10 @@ def loadTif(path):
     vol = vol.reshape((int(vol.shape[0]/(fpv*nCh)),fpv,nCh,vol.shape[1], vol.shape[2]))
 
     # Discard the flyback frames
-    stack4d = vol[:,0:fpv-nDiscardFBFrames,:,:,:]
+    stack = vol[:,0:fpv-nDiscardFBFrames,:,:,:]
 
-    return [stack4d, nCh, nDiscardFBFrames, fpv]
+    return [stack, nCh, nDiscardFBFrames, fpv]
+
 
 def tifMetadata(path):
     """ Load Scan Image tiff metadata from a Scan Image tiff reader object
@@ -138,33 +93,6 @@ def tifMetadata(path):
 
     return [nCh, discardFBFrames, nDiscardFBFrames, fpv, nVols]
 
-def getDate(path):
-    """Get the date for a tiff file
-
-    Args:
-        path (str or pathlib.Path): path to tiff file
-
-    Returns:
-        datetime: time tiff was captured
-    """
-    # Load metadata
-    with tf.TiffFile(path) as tif:
-        imagej_metadata = tif.imagej_metadata
-
-    # Search metadata for date
-    info = imagej_metadata.get('Info', None)
-    searchstr = "[Acquisition Parameters Common] ImageCaputreDate ="
-    date_str = None
-    for line in info.splitlines():
-        if searchstr in line:
-            date_str = line.split("=")[-1].strip()
-            date_str = date_str.replace('\'', '')
-            break
-    assert date_str is not None
-
-    date = datetime.fromisoformat(date_str)
-
-    return date
 
 def getFmInterval(path):
     """Get the frame interval of a tiff file
@@ -179,6 +107,7 @@ def getFmInterval(path):
         imagej_metadata = tif.imagej_metadata
     fm_interval = float(imagej_metadata.get("finterval"))
     return fm_interval
+
 
 def getPixelDims(path):
     # Load metadata
@@ -206,6 +135,7 @@ def getPixelDims(path):
                   'height_unit': height_unit,}
 
     return pixel_dims
+
 
 def plotMeanPlane(stack, col = 0, ncols = 4):
     """
@@ -236,6 +166,7 @@ def plotMeanPlane(stack, col = 0, ncols = 4):
 
     return mean_fig
 
+
 def stackToMIP(stack, slices):
     """
     Convert a stack to a series of maximum intensity projections (MIPs),
@@ -258,7 +189,8 @@ def stackToMIP(stack, slices):
     for v in range(num_vols):
         div_stack_MIP[:,v,:,:,:] = stack[:,slices[v]:slices[v+1],:,:,:].max(axis=1)
 
-    return div_stack_MIP
+    return np.squeeze(div_stack_MIP)
+
 
 def getSlicesFromStack():
     """
@@ -279,13 +211,20 @@ def getSlicesFromStack():
 
     return slices
 
+
 def tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, stack, sigma):
     """ Motion correct a tiff stack by using phase cross correlation
-    numRefImg = the number of images to average for the reference image
-    locRefImg = the initial position in the stack to use for the reference
-    upsampleFactor = how much to upsample the image in order to shift the image by less than one pixel
-    stack = the stack to be registered
-    sigma = the sigma to use in Gaussian filtering
+    
+    Arguments:
+        numRefImg = the number of images to average for the reference image
+        locRefImg = the initial position in the stack to use for the reference
+        upsampleFactor = how much to upsample the image in order to shift the image by less than one pixel
+        stack = the stack to be registered
+        sigma = the sigma to use in Gaussian filtering
+        
+    Returns:
+        shift = the shift coordinates
+        stackMC = the motion corrected stack
     """
     # Generate reference image
     refImg = np.mean(stack[locRefImg:locRefImg+numRefImg,:,:],axis=0)
@@ -321,6 +260,7 @@ def tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, stack, sigma):
 
     return [shift, stackMC]
 
+
 def divStackMIP(stack, col = 0):
     """
     Slice a stack into volumes and get the MIPs of those volumes
@@ -344,6 +284,7 @@ def divStackMIP(stack, col = 0):
     div_stack_MIP = stackToMIP(stack, slices)
 
     return [slices, div_stack_MIP]
+
 
 def motionCorrectSlicedStack(div_stack_MIP, num_ref_img = 100, upsample_factor = 20, sigma = 2):
     """
@@ -383,6 +324,7 @@ def motionCorrectSlicedStack(div_stack_MIP, num_ref_img = 100, upsample_factor =
         corrected_stacks = corrected_stack_1
     return corrected_stacks
 
+
 def getROIs(stack, roiFN, oldROIs, oldType):
     """ Use napari to get ROIs from a stack, using a given ROI function
     """
@@ -420,14 +362,14 @@ def FfromROIsDiv(stack, all_masks):
 
     return rawF
 
-def FfromROIs(stack, allMasks, frameIdx=1, ch=0):
+
+def FfromROIs(stack, allMasks, frameIdx=0):
     """Calculate the raw fluorescence in each ROI in all ROIS on the given stack
 
     Args:
         stack (NDArray[float64]): Image stack.
         allMasks (NDArray): list of masks.
-        frameIdx (int, optional): Index of stack shape that stores frames. Defaults to 1.
-        ch (int, optional): Which channel to calculate florescence from. Defaults to 0.
+        frameIdx (int, optional): Index of stack shape that stores frames. Defaults to 0.
 
     Returns:
         NDArray[float64]: ndarray raw florescence per frame and roi. shape = (# of frames, # of ROI's)
@@ -438,13 +380,14 @@ def FfromROIs(stack, allMasks, frameIdx=1, ch=0):
 
     # Step through each frame in the stack
     for fm in range(0,stack.shape[frameIdx]):
-        fmNow = stack[0, fm, ch, :, :]
+        fmNow = stack[fm, :, :]
 
         # Find the sum of the fluorescence in each ROI for the given frame
         for r in range(0,len(allMasks)):
             rawF[fm,r] = np.multiply(fmNow, allMasks[r]).sum()
 
     return rawF
+
 
 def DFoF(rawF):
     """ Calculate the DF/F given a raw fluorescence signal
@@ -460,6 +403,7 @@ def DFoF(rawF):
         DF[:,r] = rawF[:,r]/Fbaseline-1
 
     return DF
+
 
 def DFoFfromfirstfms(rawF, fm_interval, baseline_sec=10):
     """Calculate the DF/F given a raw fluorescence signal
@@ -490,86 +434,6 @@ def DFoFfromfirstfms(rawF, fm_interval, baseline_sec=10):
 
     return DF
 
-def getRingROIs(viewer, stackMean):
-    """ Get an ellipse and divide it into 16 sections
-    """
-    numROIs = 16
-    angStep = 360/numROIs
-
-    EBOutline = viewer.layers["Shapes"]
-
-    ellipseCent = [int(np.mean([p[-2] for p in EBOutline.data[0]])),
-              int(np.mean([p[-1] for p in EBOutline.data[0]]))]
-    ellipseCentInt = (int(ellipseCent[0]),int(ellipseCent[1]))
-    ellipseAx1 = np.sqrt((EBOutline.data[0][2][-1] - EBOutline.data[0][1][-1])**2 +
-                        (EBOutline.data[0][2][0] - EBOutline.data[0][1][0])**2)
-    ellipseAx2 = np.sqrt((EBOutline.data[0][0][-1] - EBOutline.data[0][1][-1])**2 +
-                        (EBOutline.data[0][0][0] - EBOutline.data[0][1][0])**2)
-    ellipseAng = 180/np.pi*np.arcsin((EBOutline.data[0][0][0] - EBOutline.data[0][1][0])/
-                                    (EBOutline.data[0][0][-1] - EBOutline.data[0][1][-1]))
-
-    rois = []
-    allMasks = []
-    for a in range(0,numROIs):
-        mask = np.zeros((stackMean.shape[0], stackMean.shape[1]))
-        pts = cv.ellipse2Poly(ellipseCentInt,
-                              (int(0.5*ellipseAx1), int(0.5*ellipseAx2)),
-                              int(ellipseAng),
-                              int(angStep*(a-1)),int(angStep*a),
-                              3)
-        roiNow = np.append(pts, [np.array(ellipseCentInt)], axis=0)
-        rois.append(roiNow)
-        allMasks.append(cv.fillConvexPoly(mask,roiNow,1))
-
-    return [EBOutline.data, rois, allMasks]
-
-def getPolyROIs(viewer, stack):
-    """ Make polygonal ROIs from a napari layer
-    """
-
-    # Get the ROIs from napari
-    rois = viewer.layers['Shapes'].data
-
-    # Initialize an array to hold the ROI masks
-    allMasks = pd.DataFrame({'roi':int(), 'layer':int(), 'mask':[]})
-
-    # Make the polygonal ROIs from the points
-    for i,r in enumerate(rois):
-        mask = np.zeros(stack.shape[1:3])
-        mask = cv.fillConvexPoly(mask,np.array(r[:,1:3],dtype='int'),1)
-        roiInfo = pd.DataFrame({'roi':i, 'layer':int(r[0,0]), 'mask':[mask]})
-        allMasks = pd.concat([allMasks, roiInfo])
-
-    return [rois, rois, allMasks]
-
-def getEBROI(viewer, stack):
-    """ Make polygonal ROIs from a napari layer
-    """
-
-    EBOutline = viewer.layers["Shapes"]
-
-    ellipseCent = [int(np.mean([p[-2] for p in EBOutline.data[0]])),
-              int(np.mean([p[-1] for p in EBOutline.data[0]]))]
-    ellipseCentInt = (int(ellipseCent[0]),int(ellipseCent[1]))
-    ellipseAx1 = np.sqrt((EBOutline.data[0][2][-1] - EBOutline.data[0][1][-1])**2 +
-                        (EBOutline.data[0][2][0] - EBOutline.data[0][1][0])**2)
-    ellipseAx2 = np.sqrt((EBOutline.data[0][0][-1] - EBOutline.data[0][1][-1])**2 +
-                        (EBOutline.data[0][0][0] - EBOutline.data[0][1][0])**2)
-    ellipseAng = 180/np.pi*np.arcsin((EBOutline.data[0][0][0] - EBOutline.data[0][1][0])/
-                                    (EBOutline.data[0][0][-1] - EBOutline.data[0][1][-1]))
-
-    pts = cv.ellipse2Poly(ellipseCentInt,
-                          (int(0.5*ellipseAx1), int(0.5*ellipseAx2)),
-                          int(ellipseAng),
-                          0, 360,
-                          3)
-
-    # Initialize an array to hold the ROI masks
-    mask = np.zeros((stack.shape[0], stack.shape[1]))
-    allMasks = []
-    allMasks.append(cv.fillConvexPoly(mask,pts,1))
-
-    return [EBOutline.data, pts, allMasks]
 
 def incr_bbox(bounding_box, scale_factor):
     """Scale a bounding box keeping it centered at the same spot
@@ -622,161 +486,3 @@ def get_bbox(rois, scale_factor=1.5):
     # Create a larger bounding box to not cut off parts of the PB
     view_box = incr_bbox(bounding_box, scale_factor)
     return view_box
-
-def plot_colorbar(cax, F_plot, F_lims, cbarlabel):
-    """Plot the colorbar for the given F_plot
-
-    Args:
-        fig (~matplotlib.figure.Figure): Figure to add colorbar to
-        cax (Axes): Axes to plot colorbar in
-        F_plot (AxesImage): Plot of florescence
-        F_lims (list): min and max florescence values
-        cbarlabel (str): label of colorbar
-    """
-    # Plot colorbar
-    fig = cax.get_figure()
-    cbar = fig.colorbar(F_plot, cax=cax)
-    if ((F_lims[0] > 0) and (F_lims[1] > 0)) or (F_lims[0] < 0) and (F_lims[1] < 0):
-        # Doesn't pass through 0 (eg. raw florescence)
-        ticks = [F_lims[0], F_lims[1]]
-        cbar.set_label(cbarlabel, labelpad=-25)
-    else:
-        # Passes through 0 (eg. delta florescence)
-        ticks = [F_lims[0], 0, F_lims[1]]
-        cbar.set_label(cbarlabel, labelpad=-12)
-    cbar.set_ticks(ticks)
-    if (F_lims[0] > 10**2) or (F_lims[1] > 10**2):
-        tick_labels = [f"{lim:g}" for lim in ticks]
-    else:
-        tick_labels = [f"{lim:.2g}" for lim in ticks]
-    cbar.ax.set_yticklabels(tick_labels)
-
-
-def plot_florescence(
-        F, panel, cmap, aspect, fm_interval, F_lims, norm=None,
-        withcbar=False, cax=None, cbarlabel=None,
-        ):
-    """Plot the florescence of F
-    if with cbar is true, need to provide axes of cbar
-    Note: Plotting fails if trial is too long, maximum length is 18 minutes
-
-    Args:
-        F (NDArray[float64]): ndarray of florescence, with shape (# of ROI's, # of frames)
-        panel (Axes): Axes to draw plot in.
-        cmap (str or Colormap): Colormap to use.
-        aspect (float): Vertical to horizontal ratio of heatmap pixel, of form aspect:1.
-        norm (TwoSlopeNorm): TwoSlopeNorm object with range of data.
-        fm_interval (float): Time it takes to capture one frame (in seconds per frame).
-        withcbar (bool, optional): Set to true to add a colorbar. Defaults to False.
-        cbaraxes (Axes, optional): Axes to plot colorbar in. Defaults to None.
-        cbarlabel (str, optional): label of colorbar. Defaults to None.
-    """
-    num_rois, num_frames = F.shape
-    # Plot florescence
-    extent = (0, num_frames * fm_interval,
-              0, num_rois)
-    F_plot = panel.imshow(
-        F,
-        cmap=cmap,
-        interpolation="none",
-        aspect=aspect,
-        norm=norm,
-        origin='lower',
-        extent=extent
-    )
-    # panel.title.set_text(title)
-    num_frames = F.shape[1]
-    panel.set_ylabel("ROI")
-    panel.set_yticks(
-        [i+0.5 for i in range(num_rois) if i % 2 == 0],
-        [i + 1 for i in range(num_rois) if i % 2 == 0],
-    )
-    # Plot colorbar
-    if withcbar:
-        plot_colorbar(cax, F_plot, F_lims, cbarlabel)
-
-def saveDFDat(fileNm, expt, expt_dat):
-    """
-    Save a dictionary of the processed data
-
-    Arguments:
-        fileNm = the file name
-        expt = the name of the experiment
-        expt_dat = the processed experimental data
-    """
-    allDat = dict()
-
-    # Open the previously saved data
-    if os.path.isfile(fileNm):
-        infile = open(fileNm,'rb')
-        allDat = pickle.load(infile)
-        infile.close()
-
-    # Add the new data
-    allDat[expt] = expt_dat
-
-    # Save the data
-    with open(fileNm, 'wb') as outfile:
-        pickle.dump(allDat, outfile)
-
-def formatDate(year, month):
-    """Formats year and month together into form YYYY_MM
-
-    Args:
-        year (int)
-        month (int)
-
-    Returns:
-        str: formated year and month string
-    """
-    formatted_date = f"{year}_{month:02d}"
-    return formatted_date
-
-def getPicklePath(trialNm, folderNm):
-    """Create path for pickle file. 
-    Under the folder given, the pickle file is stored in a year and month folder (year_month)
-
-    Args:
-        folder (str): path to folder to store pickle file in
-        trialNm (str): filename of trial
-
-    Returns:
-        str: path of pickle file
-    """
-    trial_date = getDate(trialNm)
-    year_month = formatDate(trial_date.year, trial_date.month)
-    dirPath = Path(folderNm, year_month)
-
-    timestamp = trial_date.strftime("%Y%m%d-%H%M")
-    baseNm = timestamp + '_' + Path(trialNm).stem + ".pickle"
-    fullPath = Path(dirPath, baseNm)
-    return fullPath
-
-def loadProcData(proc_data_fn):
-    """Return processed data
-
-    Args:
-        proc_data_fn (str): path to processed data
-
-    Returns:
-        dict: dictionary of trial data
-    """
-    assert os.path.isfile(proc_data_fn)
-    with open(proc_data_fn, 'rb') as infile:
-        data = pickle.load(infile)
-    return data
-
-def saveTrials(expt_dat, folderNm):
-    # Given a dictionary of trials,
-    # save each trial in a seperate pickle file
-    for trialNm, trial in expt_dat.items():
-        trial_date = getDate(trialNm)
-        year_month = formatDate(trial_date.year, trial_date.month)
-        dirPath = os.path.join(folderNm, year_month)
-        os.makedirs(dirPath, exist_ok=True)
-
-        timestamp = trial_date.strftime("%Y%m%d-%H%M")
-        basename = timestamp + '_' + Path(trialNm).stem + ".pickle"
-        fullPath = os.path.join(dirPath, basename)
-        with open(fullPath, 'wb') as outfile:
-            pickle.dump(trial, outfile)
