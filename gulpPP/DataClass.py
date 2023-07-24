@@ -1,7 +1,7 @@
 from os import listdir
 from os.path import sep, exists, split
 import pickle
-import src.utils as ut
+import gulpPP.utils as ut
 
 def loadData(rootDir):
     allDat = dict()
