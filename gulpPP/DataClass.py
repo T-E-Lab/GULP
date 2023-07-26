@@ -1,5 +1,5 @@
 from os import listdir
-from os.path import sep, exists, split
+from os.path import sep
 import pickle
 import gulpPP.utils as ut
 
@@ -30,12 +30,11 @@ def loadData(rootDir):
 import numpy as np
 import pandas as pd
 import pingouin
-from matplotlib import pyplot as plt
 from matplotlib.patches import Polygon
 from scipy.signal import savgol_filter
 
 class PPDat:
-    def __init__(self, trialName = '',
+    def __init__(self, trialName = '', fpv = 1,
                  meanMIP_G = np.zeros((256,256)), meanMIP_R = None,
                  allROIs = np.empty((1,1)),
                  DF_G = np.empty((1,1)), DF_R = None,
@@ -43,6 +42,7 @@ class PPDat:
                  behavDat = pd.DataFrame()):
         # Define the class members
         self.trialName = trialName
+        self.fpv = fpv
         self.meanMIP_G = meanMIP_G
         self.meanMIP_R = meanMIP_R
         self.allROIs = allROIs
@@ -145,8 +145,8 @@ class PPDat:
             PVAStren = self.PVAStren_R
         PVA = ut.removeJumps(PVA, thresh = np.pi)
         PVA[PVAStren < PVAthresh] = None
-        PVAPlt = ax.plot(self.behavDat['Elapsed time'],
-                         PVA, color = color)
+        ax.plot(self.behavDat['Elapsed time'],
+                PVA, color = color)
         ax.set_xlim(self.behavDat['Elapsed time'][0],self.behavDat['Elapsed time'].iloc[-1])
         ax.set_ylim(-np.pi,np.pi)
         ax.set(yticks = np.linspace(-np.pi, np.pi, 5),
@@ -157,9 +157,9 @@ class PPDat:
             PVAStren = self.PVAStren_G.T
         if color == 'r':
             PVAStren = self.PVAStren_R.T
-        PVAStrenPlt = ax.imshow(PVAStren, cmap = 'Greys', aspect = aspect,
-                             extent = [self.behavDat['Elapsed time'][0],self.behavDat['Elapsed time'].iloc[-1],0,1],
-                             vmin = 0, vmax = 1)
+        ax.imshow(PVAStren, cmap = 'Greys', aspect = aspect,
+                  extent = [self.behavDat['Elapsed time'][0],self.behavDat['Elapsed time'].iloc[-1],0,1],
+                  vmin = 0, vmax = 1)
 
     def plotPVAStrenHist(self, ax, PVAbins = np.linspace(0,1,21), fc = (0,0,0,1), PVAthresh = 0.2):
         ax.hist(self.PVAStren_G, bins = PVAbins, fc = fc)
@@ -176,10 +176,6 @@ class PPDat:
         ax.hist(self.vF, bins = vFbins, fc = fc)
         ax.set_ylabel('counts')
         ax.set_xlabel('vF')
-
-    def plotPVAStrenHist(self,ax, PVAbins = np.linspace(0,1,21), fc = (0,0,0,1), PVAthresh = 0.2):
-        ax.hist(self.PVAStren_G,bins = PVAbins, fc = fc)
-        ax.axvline(x = PVAthresh, linestyle = '--', color = 'k')
 
     def plotRot(self,ax):
         ax.plot(self.behavDat['Elapsed time'][self.visPeriods['darkPer']],
