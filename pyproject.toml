@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "gulpPP"
+name = "gulp2p"
 version = "0.1.0"
 description = "For preprocessing data from two-photon imaging  of head-fixed flies walking in virtual reality"
 authors = ["DanTurner-Evans <65718402+DanTurner-Evans@users.noreply.github.com>"]
 readme = "README.md"
-packages = [{include = "gulpPP"}]
+packages = [{include = "gulp2P"}]
 
 [tool.poetry.dependencies]
 python = "^3.9, <3.11"

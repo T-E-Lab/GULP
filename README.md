@@ -32,5 +32,5 @@ I recommend using poetry to setup a custom conda environment. A helpful introduc
     `conda install nbconvert==5.4.1`
     
     If you get an error importing modules, run:
-    `conda install -c conda-forge charset-normalizer`
+    `conda install -c conda-forge charset-normalizer=2.1.0`
 Now you should be able to run the example notebooks in the **scripts** folder without problems. 

@@ -348,7 +348,7 @@ def FfromROIsDiv(stack, all_masks):
     """
     num_frames = stack.shape[0]
 
-    # Initialie the array to hold the fluorescence data
+    # Initialize the array to hold the fluorescence data
     rawF = np.zeros((num_frames,len(all_masks)))
 
     # Step through each frame in the stack
@@ -375,16 +375,15 @@ def FfromROIs(stack, allMasks, frameIdx=0):
         NDArray[float64]: ndarray raw florescence per frame and roi. shape = (# of frames, # of ROI's)
     """
 
-    # Initialie the array to hold the fluorescence data
+    # Initialize the array to hold the fluorescence data
     rawF = np.zeros((stack.shape[frameIdx],len(allMasks)))
 
     # Step through each frame in the stack
-    for fm in range(0,stack.shape[frameIdx]):
-        fmNow = stack[fm, :, :]
-
+    # https://stackoverflow.com/questions/1589706/iterating-over-arbitrary-dimension-of-numpy-array
+    for fm_num, frame in enumerate(np.moveaxis(stack, frameIdx, -1)):
         # Find the sum of the fluorescence in each ROI for the given frame
         for r in range(0,len(allMasks)):
-            rawF[fm,r] = np.multiply(fmNow, allMasks[r]).sum()
+            rawF[fm_num,r] = np.multiply(frame, allMasks[r]).sum()
 
     return rawF
 
