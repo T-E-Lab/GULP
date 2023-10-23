@@ -74,7 +74,7 @@ def tifMetadata(path):
                 if not '[' in line:
                     nCh = 1
                 else:
-                    nCh = len(line.split('=')[-1].split(sep=';'))
+                    nCh = len(line.split('=')[-1].strip().split(sep=' '))
 
             if 'scanFrameRate' in line:
                 fpsscan = float(line.split('=')[-1].strip())
