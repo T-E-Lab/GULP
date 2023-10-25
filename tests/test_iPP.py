@@ -1,4 +1,4 @@
-from imganlys import ImagingPreProc as iPP
+from gulp2p import ImagingPreProc as iPP
 from pathlib import Path
 import datetime
 import pytest
