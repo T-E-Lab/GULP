@@ -10,21 +10,23 @@ from pathlib import Path
 
 
 
-def loadFileNames(single_file=False):
+def loadFileNames(single_file=False, title=None):
     """Prompt user to select one or multiple files
 
     Returns:
         list: list of filenames of trials
     """
+    if title is None:
+        title = "select files"
 
     root = tk.Tk()
     root.withdraw()
     root.attributes("-topmost", 1)
 
     if single_file:
-        trial_file_nms = filedialog.askopenfilename(title="Select files")
+        trial_file_nms = filedialog.askopenfilename(title=title)
     else:
-        trial_file_nms = filedialog.askopenfilenames(title="Select files")
+        trial_file_nms = filedialog.askopenfilenames(title=title)
     return trial_file_nms
 
 def loadTrialInfo(rootDirs):
