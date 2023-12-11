@@ -229,6 +229,4 @@ def get_bhv_path(trial_tiff_path, bhv_data_folder, max_creation_delay=360, min_f
                        f"This is above the max delay of {max_creation_delay}."),
                        stacklevel=2)
         return None
-
-    print(min_diff)
     return min_diff_path

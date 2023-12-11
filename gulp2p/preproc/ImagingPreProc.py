@@ -8,6 +8,9 @@ import napari
 from napari.settings import SETTINGS # Changed from from napari.utils.settings import SETTINGS
 SETTINGS.application.ipy_interactive = False
 from matplotlib import pyplot as plt
+import pickle
+
+from gulp2p.preproc import ROIs
 
 def loadTif(path):
     """ Load in a Scan Image tiff from the specified path
@@ -492,3 +495,70 @@ def get_bbox(rois, image_shape, scale_factor=1.5):
     # Create a larger bounding box to not cut off parts of the PB
     view_box = incr_bbox(bounding_box, image_shape, scale_factor)
     return view_box
+
+def preprocess(file, old_rois, numRefImg=50, upsampleFactor=20, sigma=2):
+    # numRefImg: the number of images to average for the reference image
+    # upsampleFactor: how much to upsample the image in order to shift the image by less than one pixel
+    # sigma: the sigma to use in Gaussian filtering
+
+    # Load the tif
+    [stack, nCh, nDiscardFBFrames, fpv] = loadTif(file)
+
+    # Plot the mean of each plane
+    fig_mean_planes = plotMeanPlane(stack,col=0) # col=1 to plot the second channel if it exists
+    
+    # Specify the planes to use for the Maximum Intensity Projection (MIP)
+    slices = getSlicesFromStack()
+    
+    # Calculate the MIP
+    stack_MIP = stackToMIP(stack,slices)
+
+    # Motion correct the MIP
+    locRefImg = round(stack_MIP.shape[0]/12)# the initial position in the stack to use for the reference
+    # [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
+    
+    if nCh == 1:
+        [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP), sigma)
+    else:
+        [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
+
+
+
+    # Plot the before and after
+    fig, axs = plt.subplots(ncols = 2, nrows = 1, figsize = (6,2))
+    axs[0].imshow(stack_MIP.mean(axis=0))
+    axs[0].axis('off')
+    axs[1].imshow(stack_MC.mean(axis=0))
+    axs[1].axis('off')
+    
+    # Get the ROIS - For EB wedges, there are a number of other possible ROI functions for different shapes
+    if old_rois is not None:
+        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), ROIs.PolyROIs, old_rois, 'polygon')
+    else:
+        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), ROIs.PolyROIs, [],'')
+    
+    # Get the raw fluorescence
+    rawF_G = np.zeros((stack_MC.shape[0],len(allMasks)))
+    for fm_num, frame in enumerate(stack_MC):
+        for r in range(0,len(allMasks)):
+            rawF_G[fm_num,r] = np.multiply(frame, allMasks[r].T).sum()
+    
+    # Get the DF/F
+    DF_G = DFoF(rawF_G)
+    
+    # Put all of the data into a dictionary
+    exptDat = {'trialName':file.split('/')[-1][0:-4],
+               'fpv': fpv,
+               'meanMIP_G': np.squeeze(stack_MC.mean(axis=0)),
+               'ROIOutlines': rois,
+               'allROIs': allROIs,
+               'rawF_G':rawF_G,
+               'DF_G': DF_G
+              }
+    
+    # Pickle and save the data
+    #TODO: Add overwrite protection
+    outfile = open(file[0:-4] + '_DF.p', 'wb')
+    pickle.dump(exptDat, outfile)
+    outfile.close()
+    return exptDat
