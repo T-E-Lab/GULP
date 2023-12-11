@@ -12,9 +12,9 @@ import pingouin
 
 from unityvr.preproc import logproc as lp
 from unityvr.analysis import posAnalysis, align2img
-from gulp2p import utils as utils
-from gulp2p import ImagingPreProc as iPP
-from gulp2p import ROIs as ROIs
+from gulp2p.preproc import utils as utils
+from gulp2p.preproc import ImagingPreProc as iPP
+from gulp2p.preproc import ROIs as ROIs
 
 class FlyTrials():
     def __init__(self, path):
