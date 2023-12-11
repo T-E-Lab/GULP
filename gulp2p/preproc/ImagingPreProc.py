@@ -334,6 +334,8 @@ def getROIs(stack, roiFN, oldROIs, oldType):
     viewer.add_image(stack)
     if len(oldROIs) > 0:
         viewer.add_shapes(oldROIs, shape_type=oldType, name = 'Shapes')
+    else:
+        viewer.add_shapes(name = 'Shapes')
     napari.run()
 
     # Use the ROIs that were drawn in napari to get image masks
@@ -380,10 +382,10 @@ def FfromROIs(stack, allMasks, frameIdx=0):
 
     # Step through each frame in the stack
     # https://stackoverflow.com/questions/1589706/iterating-over-arbitrary-dimension-of-numpy-array
-    for fm_num, frame in enumerate(np.moveaxis(stack, frameIdx, -1)):
+    for fm_num, frame in enumerate(np.moveaxis(stack, frameIdx, 0)):
         # Find the sum of the fluorescence in each ROI for the given frame
         for r in range(0,len(allMasks)):
-            rawF[fm_num,r] = np.multiply(frame, allMasks[r]).sum()
+            rawF[fm_num,r] = np.multiply(np.squeeze(frame), allMasks[r]).sum()
 
     return rawF
 
@@ -434,7 +436,7 @@ def DFoFfromfirstfms(rawF, fm_interval, baseline_sec=10):
     return DF
 
 
-def incr_bbox(bounding_box, scale_factor):
+def incr_bbox(bounding_box, image_shape, scale_factor):
     """Scale a bounding box keeping it centered at the same spot
 
     Args:
@@ -454,9 +456,14 @@ def incr_bbox(bounding_box, scale_factor):
             length = bounding_box[dim, 1] - bounding_box[dim, 0]
             scale_amount = sign * (scale_factor - 1) / 2 * length
             view_box[dim, lim] = bounding_box[dim, lim] + scale_amount
+        # Clip box if it extends beyond image bounds
+        if view_box[dim, 0] < 0:
+            view_box[dim, 0] = 0
+        if view_box[dim, 1] > image_shape[dim]:
+            view_box[dim, 1] = image_shape[dim]
     return view_box
 
-def get_bbox(rois, scale_factor=1.5):
+def get_bbox(rois, image_shape, scale_factor=1.5):
     """Given a list of rois, return a bounding box, a scale factor of 1 is a tight box
 
     Args:
@@ -483,5 +490,5 @@ def get_bbox(rois, scale_factor=1.5):
     bounding_box[:, 1] = roi_bounds[:, :, 1].max(axis=0)
 
     # Create a larger bounding box to not cut off parts of the PB
-    view_box = incr_bbox(bounding_box, scale_factor)
+    view_box = incr_bbox(bounding_box, image_shape, scale_factor)
     return view_box
