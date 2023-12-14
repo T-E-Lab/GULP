@@ -4,7 +4,7 @@ import tifffile as tf
 from datetime import datetime
 import os.path
 from pathlib import Path
-# from functools import property
+from functools import cached_property
 
 from gulp2p.preproc import utils
 
@@ -13,15 +13,15 @@ class Tiff:
     def __init__(self, path):
         self.path = Path(path)
 
-    @property
+    @cached_property
     def scanimage_tiff_reader(self):
         return ScanImageTiffReader(str(self.path))
 
-    @property
+    @cached_property
     def scanimage_metadata(self):
         return self.scanimage_tiff_reader.metadata()
 
-    @property
+    @cached_property
     def is_scanimage(self):
         if self.scanimage_metadata == '':
             # Not a ScanImage tiff
@@ -158,7 +158,7 @@ class Tiff:
 
         return metadata_dict
 
-    @property
+    @cached_property
     def metadata(self):
         """Load tiff metadata
         ScanImage tiffs will be processed with ScanImageTiffReader.
@@ -178,8 +178,8 @@ class Tiff:
         else:
             return self.get_imagej_metadata()
 
-    def load_scanimage_tiff(self):
-        """ Load in a Scan Image tiff from the specified path
+    def load_tiff(self):
+        """ Load in a tiff from the specified path
         
         Returns:
             stack: the imaging data in dimensions of 
@@ -193,9 +193,6 @@ class Tiff:
             fpv: frames per volume
         """
 
-        # Make a tiff reader object
-        mytiffreader = ScanImageTiffReader(str(self.path))
-
         # Get the metadata
         metadata = self.metadata
         size_t = metadata['SizeT']
@@ -207,13 +204,11 @@ class Tiff:
         num_fb_frames = metadata['num_fb_frames']
 
         # Load the tiff data
-        stack = mytiffreader.data()
+        stack = self.scanimage_tiff_reader.data()
 
         # Reshape the volume to reflect the experimental parameters
-        # vol = vol.reshape((int(vol.shape[0]/Sfpv*nCh)),fpv,nCh,vol.shape[1], vol.shape[2])
-
         stack = stack.reshape(size_t, size_z, size_c, size_y, size_x)
-        metadata['dimension_order'] = 'TZCYX'
+        self.metadata['dimension_order'] = 'TZCYX'
 
         # Discard the flyback frames
         if discard_fb_frames:
@@ -224,9 +219,6 @@ class Tiff:
     def load_standard_tiff(self):
         raise NotImplementedError
 
-    @property
+    @cached_property
     def stack(self):
-        if self.is_scanimage:
-            return self.load_scanimage_tiff()
-        else:
-            return self.load_standard_tiff()
+        return self.load_tiff()
