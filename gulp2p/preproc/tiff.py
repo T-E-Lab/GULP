@@ -5,24 +5,55 @@ from datetime import datetime
 import os.path
 from pathlib import Path
 from functools import cached_property
+import numpy as np
 
 from gulp2p.preproc import utils
 
 class Tiff:
+    """A class to handle loading tiffs and metadata.
+    Use Tiff.metadata to access metadata
+    Use Tiff.stack to access the stack
+    Both properties are loaded and cached the first time they are called.
 
-    def __init__(self, path):
+    Usage:
+        Create Tiff object:
+            `tiff = Tiff(path_to_tiff)`
+        Access stack:
+            `stack = tiff.stack`
+        Access metadata:
+            `metadata = tiff.metadata`
+
+    Attributes:
+        path (os.PathLike): Path to tiff file.
+        scanimage_tiff_reader (ScanImageTiffReader): ScanImageTiffReader of tiff.
+        scanimage_metadata (str): ScanImage specific metadata of tiff.
+        stack (np.ndarray): Numpy array of tiff data.
+        metadata (dict): Dict of relevant tiff metadata.
+            Dictionary keys defined in metadata function
+
+    Methods:
+        get_scanimage_metadata(self) -> dict
+        get_imagej_metadata(self) -> dict
+        load_tiff(self) -> np.ndarray
+    """
+    def __init__(self, path) -> None:
+        """Constructor to create Tiff object.
+
+        Args:
+            path (os.PathLike): Path to tiff file.
+        """
         self.path = Path(path)
 
     @cached_property
-    def scanimage_tiff_reader(self):
+    def scanimage_tiff_reader(self) -> ScanImageTiffReader:
         return ScanImageTiffReader(str(self.path))
 
     @cached_property
-    def scanimage_metadata(self):
+    def scanimage_metadata(self) -> str:
         return self.scanimage_tiff_reader.metadata()
 
     @cached_property
-    def is_scanimage(self):
+    def is_scanimage(self) -> bool:
         if self.scanimage_metadata == '':
             # Not a ScanImage tiff
             return False
@@ -30,8 +61,9 @@ class Tiff:
             # Is a ScanImage tiff
             return True
 
-    def get_scanimage_metadata(self):
+    def get_scanimage_metadata(self) -> dict:
         """Get metadata of scanimage tiff.
+        Dictionary keys defined in metadata function
 
         Returns:
             dict: Dictionary of metadata.
@@ -99,8 +131,9 @@ class Tiff:
 
         return metadata_dict
 
-    def get_imagej_metadata(self):
+    def get_imagej_metadata(self) -> dict:
         """Get metadata of imagej tiff.
+        Dictionary keys defined in metadata function.
 
         Returns:
             dict: Dictionary of metadata.
@@ -159,7 +192,7 @@ class Tiff:
         return metadata_dict
 
     @cached_property
-    def metadata(self):
+    def metadata(self) -> dict:
         """Load tiff metadata
         ScanImage tiffs will be processed with ScanImageTiffReader.
         Other tiffs will be processed with tiffile.TiffFile.imagej_metadata.
@@ -171,26 +204,44 @@ class Tiff:
 
         Returns:
             dict: Dictionary of metadata.
+            Keys:
+                SizeC (int): Number of channels.
+                SizeT (int): Number of frames.
+                SizeZ (int): Number of slices.
+                SizeY (int): Height of each frame.
+                SizeX (int): Width of each frame.
+                frame_rate (float): Frame rate of tiff.
+                frame_interval (float): Frame interval of tiff.
+                volume_rate (float): Volume rate of tiff. Only defined for scanimage tiffs.
+                zoom_factor (float): Optical zoom amount.
+                discard_fb_frames (bool): True if flyback frames need to be discarded. 
+                num_fb_frames (int): Number of flyback frames per volume.
+                flyback_time (float): Time it takes for Z motor to move back to start position. Only defined for scanimage tiffs.
+                laser_power (float): Percent of laser power used during acqusition. Only defined for scanimage tiffs.
+                pixel_bin_factor (int): bin size used during acquisition. Only defined for scanimage tiffs.
+                date (datetime): Time of acquisition.
+                file_size (int): Size of tiff in bytes.
+                dimension_order (str): Dimension order.
+                pixel_width (float): width of pixels in units from width_unit.
+                width_unit (str): units used to define width of pixels.
+                pixel_height (float): height of pixels in units from width_unit.
+                height_unit (str): units used to define height of pixels.
         """
-
         if self.is_scanimage:
             return self.get_scanimage_metadata()
         else:
             return self.get_imagej_metadata()
 
-    def load_tiff(self):
-        """ Load in a tiff from the specified path
+    def load_tiff(self) -> np.ndarray:
+        """ Load in the tiff from self.path
         
         Returns:
-            stack: the imaging data in dimensions of 
+            stack (np.ndarray): the imaging data in dimensions of 
                 0: # of volumes
                 1: # of frames per volume
                 2: # of channels
                 3: width
                 4: height
-            nCh: # of channels
-            nDiscardFBFrames: # of frames discarded during fly back
-            fpv: frames per volume
         """
 
         # Get the metadata
@@ -207,6 +258,7 @@ class Tiff:
         stack = self.scanimage_tiff_reader.data()
 
         # Reshape the volume to reflect the experimental parameters
+        #TODO: validate it reshapes non scanimage tiffs correctly
         stack = stack.reshape(size_t, size_z, size_c, size_y, size_x)
         self.metadata['dimension_order'] = 'TZCYX'
 
@@ -216,9 +268,6 @@ class Tiff:
 
         return stack
 
-    def load_standard_tiff(self):
-        raise NotImplementedError
-
     @cached_property
-    def stack(self):
+    def stack(self) -> np.ndarray:
         return self.load_tiff()
