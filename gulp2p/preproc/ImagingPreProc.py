@@ -9,135 +9,12 @@ from napari.settings import SETTINGS # Changed from from napari.utils.settings i
 SETTINGS.application.ipy_interactive = False
 from matplotlib import pyplot as plt
 import pickle
+from datetime import datetime
+import os.path
+from pathlib import Path
 
-from gulp2p.preproc import ROIs
-
-def loadTif(path):
-    """ Load in a Scan Image tiff from the specified path
-    
-    Returns:
-        stack: the imaging data in dimensions of 
-            0: # of volumes
-            1: # of frames per volume
-            2: # of channels
-            3: width
-            4: height
-        nCh: # of channels
-        nDiscardFBFrames: # of frames discarded during fly back
-        fpv: frames per volume
-    """
-
-    # Make a tiff reader object
-    mytiffreader = ScanImageTiffReader(str(path))
-
-    # Get the metadata
-    [nCh, discardFBFrames, nDiscardFBFrames, fpv, nVols] = tifMetadata(path)
-
-    # Load the tif data
-    vol = mytiffreader.data()
-
-    # Reshape the volume to reflect the experimental parameters
-    vol = vol.reshape((int(vol.shape[0]/(fpv*nCh)),fpv,nCh,vol.shape[1], vol.shape[2]))
-
-    # Discard the flyback frames
-    stack = vol[:,0:fpv-nDiscardFBFrames,:,:,:]
-
-    return [stack, nCh, nDiscardFBFrames, fpv]
-
-
-def tifMetadata(path):
-    """ Load Scan Image tiff metadata from a Scan Image tiff reader object
-    """
-
-    mytiffreader = ScanImageTiffReader(str(path))
-    metadat = mytiffreader.metadata()
-
-    # If metadat is empty, it is not a ScanImage tiff file so use a general tiff metadata reader
-    if not metadat:
-        with tf.TiffFile(path) as tif:
-            imagej_metadata = tif.imagej_metadata
-
-            SizeC = int(imagej_metadata.get('channels', 1))
-            SizeT = int(imagej_metadata.get('frames', 1))
-            SizeZ = int(imagej_metadata.get('images', 1) / SizeC / SizeT)
-
-            nCh = SizeC
-            discardFBFrames = None
-            nDiscardFBFrames = 0 # Assuming no flyback frames
-            fpv = int(SizeT / SizeZ)
-            nVols = SizeZ
-
-    else:
-        # Step through the metadata, extracting relevant parameters
-        for i, line in enumerate(metadat.split('\n')):
-            if not 'SI.' in line: continue
-
-            # get channel info
-            if 'channelSave' in line:
-                if not '[' in line:
-                    nCh = 1
-                else:
-                    nCh = len(line.split('=')[-1].strip().split(sep=' '))
-
-            if 'scanFrameRate' in line:
-                fpsscan = float(line.split('=')[-1].strip())
-
-            if 'discardFlybackFrames' in line:
-                discardFBFrames = line.split('=')[-1].strip()
-
-            if 'numDiscardFlybackFrames' in line:
-                nDiscardFBFrames = int(line.split('=')[-1].strip())
-
-            if 'numFramesPerVolume' in line:
-                fpv = int(line.split('=')[-1].strip())
-
-            if 'numVolumes' in line:
-                nVols = int(line.split('=')[-1].strip())
-
-    return [nCh, discardFBFrames, nDiscardFBFrames, fpv, nVols]
-
-
-def getFmInterval(path):
-    """Get the frame interval of a tiff file
-
-    Args:
-        path (str): path to tiff file
-
-    Returns:
-        float: frame interval
-    """
-    with tf.TiffFile(path) as tif:
-        imagej_metadata = tif.imagej_metadata
-    fm_interval = float(imagej_metadata.get("finterval"))
-    return fm_interval
-
-
-def getPixelDims(path):
-    # Load metadata
-    with tf.TiffFile(path) as tif:
-        imagej_metadata = tif.imagej_metadata
-
-    # Search metadata for pixel dimensions
-    info = imagej_metadata.get('Info', None)
-    for line in info.splitlines():
-        if '[Reference Image Parameter] WidthConvertValue' in line:
-            pixel_width = line.split("=")[-1].strip()
-
-        if '[Reference Image Parameter] WidthUnit' in line:
-            width_unit = line.split("=")[-1].strip()
-
-        if '[Reference Image Parameter] HeightConvertValue' in line:
-            pixel_height = line.split("=")[-1].strip()
-
-        if '[Reference Image Parameter] HeightUnit' in line:
-            height_unit = line.split("=")[-1].strip()
-
-    pixel_dims = {'pixel_width': pixel_width,
-                  'width_unit': width_unit,
-                  'pixel_height': pixel_height,
-                  'height_unit': height_unit,}
-
-    return pixel_dims
+from gulp2p import preproc
+from gulp2p.preproc.tiff import Tiff
 
 
 def plotMeanPlane(stack, col = 0, ncols = 4):
@@ -466,6 +343,7 @@ def incr_bbox(bounding_box, image_shape, scale_factor):
             view_box[dim, 1] = image_shape[dim]
     return view_box
 
+
 def get_bbox(rois, image_shape, scale_factor=1.5):
     """Given a list of rois, return a bounding box, a scale factor of 1 is a tight box
 
@@ -496,13 +374,25 @@ def get_bbox(rois, image_shape, scale_factor=1.5):
     view_box = incr_bbox(bounding_box, image_shape, scale_factor)
     return view_box
 
-def preprocess(file, old_rois, numRefImg=50, upsampleFactor=20, sigma=2):
-    # numRefImg: the number of images to average for the reference image
-    # upsampleFactor: how much to upsample the image in order to shift the image by less than one pixel
-    # sigma: the sigma to use in Gaussian filtering
 
+def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
+    """Draw rois over brain regions in napari.
+    Returns dictionary with florescence data.
+
+    Args:
+        file (Path): Path of tiff to preprocess. 
+        old_rois (list): list of old rois from previous preprocessing. Defaults to None.
+        numRefImg (int, optional): the number of images to average for the reference image. Defaults to 50.
+        upsampleFactor (int, optional): how much to upsample the image in order to shift the image by less than one pixel. Defaults to 20.
+        sigma (int, optional): the sigma to use in Gaussian filtering. Defaults to 2.
+
+    Returns:
+        dict: preprocessed image data.
+    """
     # Load the tif
-    [stack, nCh, nDiscardFBFrames, fpv] = loadTif(file)
+    tiff = Tiff(file)
+    stack = tiff.stack
+    size_c = tiff.metadata['SizeC']
 
     # Plot the mean of each plane
     fig_mean_planes = plotMeanPlane(stack,col=0) # col=1 to plot the second channel if it exists
@@ -517,7 +407,7 @@ def preprocess(file, old_rois, numRefImg=50, upsampleFactor=20, sigma=2):
     locRefImg = round(stack_MIP.shape[0]/12)# the initial position in the stack to use for the reference
     # [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
     
-    if nCh == 1:
+    if size_c == 1:
         [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP), sigma)
     else:
         [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
@@ -533,9 +423,9 @@ def preprocess(file, old_rois, numRefImg=50, upsampleFactor=20, sigma=2):
     
     # Get the ROIS - For EB wedges, there are a number of other possible ROI functions for different shapes
     if old_rois is not None:
-        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), ROIs.PolyROIs, old_rois, 'polygon')
+        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), preproc.ROIs.PolyROIs, old_rois, 'polygon')
     else:
-        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), ROIs.PolyROIs, [],'')
+        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), preproc.ROIs.PolyROIs, [],'')
     
     # Get the raw fluorescence
     rawF_G = np.zeros((stack_MC.shape[0],len(allMasks)))
@@ -547,17 +437,20 @@ def preprocess(file, old_rois, numRefImg=50, upsampleFactor=20, sigma=2):
     DF_G = DFoF(rawF_G)
     
     # Put all of the data into a dictionary
-    exptDat = {'trialName':file.split('/')[-1][0:-4],
-               'fpv': fpv,
-               'meanMIP_G': np.squeeze(stack_MC.mean(axis=0)),
-               'ROIOutlines': rois,
-               'allROIs': allROIs,
-               'rawF_G':rawF_G,
-               'DF_G': DF_G
+    exptDat = {'path':Path(file),
+               'name':Path(file).stem,
+               'stack_mip': np.squeeze(stack_MC.mean(axis=0)),
+               'rois': rois,
+               'rawf':rawF_G,
+               'deltaf': DF_G,
+               'metadata': tiff.metadata,
               }
-    
+    # TODO: make MIP, rawF, and DF multichannel if image is multichannel.
+
+
     # Pickle and save the data
     #TODO: Add overwrite protection
+    #TODO: Save to standard location (i.e. pickle folder like in glupuff)
     outfile = open(file[0:-4] + '_DF.p', 'wb')
     pickle.dump(exptDat, outfile)
     outfile.close()

@@ -84,12 +84,14 @@ def loadProcData(proc_data_fn):
         data = pickle.load(infile)
     return data
 
-def saveTrials(expt_dat, folderNm):
+def saveTrials(expt_dat, folderNm, subfolder=None):
     # Given a dictionary of trials,
     # save each trial in a seperate pickle file
     for trialNm, trial in expt_dat.items():
-        trial_date = getDate(trialNm)
-        year_month = formatDate(trial_date.year, trial_date.month)
+        if subfolder is None:
+            trial_date = getDate(trialNm)
+            year_month = formatDate(trial_date.year, trial_date.month)
+            subfolder = year_month
         dirPath = os.path.join(folderNm, year_month)
         os.makedirs(dirPath, exist_ok=True)
 
@@ -129,7 +131,7 @@ def getDate(path):
     return date
 
 
-def getPicklePath(trialNm, folderNm):
+def getPicklePath(trialNm, folderNm, trial_date=None):
     """Create path for pickle file. 
     Under the folder given, the pickle file is stored in a year and month folder (year_month)
 
@@ -140,9 +142,11 @@ def getPicklePath(trialNm, folderNm):
     Returns:
         str: path of pickle file
     """
-    trial_date = getDate(trialNm)
+    if trial_date is None:
+        trial_date = getDate(trialNm)
     year_month = formatDate(trial_date.year, trial_date.month)
-    dirPath = Path(folderNm, year_month)
+    subfolder = year_month
+    dirPath = Path(folderNm, subfolder)
 
     timestamp = trial_date.strftime("%Y%m%d-%H%M")
     baseNm = timestamp + '_' + Path(trialNm).stem + ".pickle"
@@ -174,26 +178,47 @@ def saveDFDat(fileNm, expt, expt_dat):
     with open(fileNm, 'wb') as outfile:
         pickle.dump(allDat, outfile)
 
-def get_bhv_path(trial_tiff_path, bhv_data_folder, max_creation_delay=360, min_file_mb=2.5, creation_offset=0, filter_date='20231201'):
-    # Given the path to a trials tiff file (trial_tiff_path)
-    # Find the corresponding behavioral data file in the bhv_data_folder
+def get_creation_time(trial_tiff_path):
+    # If the tiff was copied to another system its creation date will get reset but not other metadata.
+    # In these cases use modification time - estimated length as tiff creation time.
+    # Length of trial can be estimated with fm_interval and num of frames.
 
-    # Get creation date of tiff file using os.path.getctime(path)
-    # Convert to datetime object
-    # For json file in bhv_data_folder
-    #   get datetime of date in json filename
-    #   get the difference between tiff time and json time
-    # print the min time 
+    ctime = os.path.getctime(trial_tiff_path)
+    mtime = os.path.getmtime(trial_tiff_path)
+    if ctime < mtime:
+        # Expected result
+        return ctime
+    
+    # Modified before created
+    # This means creation date is innacurate and needs to be estimated
+    #TODO: Use frame interval and num of frames OR volume rate and num of vols to get length of tiff.
+    tiff_length = 6*60 # Using 6 minutes as placeholder tiff length
+    ctime -= tiff_length
 
-    tiff_unix_time = min(os.path.getctime(trial_tiff_path), os.path.getmtime(trial_tiff_path))
+    return ctime
+
+def get_bhv_path(trial_tiff_path, bhv_data_folder,
+                 max_creation_delay=360, min_file_mb=2.5,
+                 creation_offset=0, filter_date='20231201'):
+    """Find the corresponding behavioral data file of a tiff file.
+
+    Args:
+        trial_tiff_path (Path): Path to tiff file
+        bhv_data_folder (Path): Path to behavioral data folder
+        max_creation_delay (int, optional): Maximum delay in seconds (+ or -) between the tiff and bhv file. Defaults to 360.
+        min_file_mb (float, optional): Minimum file size in MB a bhv file can have. Defaults to 2.5.
+        creation_offset (int, optional): Time it took for the tiff file to get created once recording began. Defaults to 0.
+        filter_date (str, optional): Date when creation delay was fixed, tiffs from before get an additional offset of 360. Defaults to '20231201'.
+
+    Returns:
+        Path: Path to behavioral data file.
+    """
+
+    tiff_unix_time = get_creation_time(trial_tiff_path)
+    min(os.path.getctime(trial_tiff_path), os.path.getmtime(trial_tiff_path))
 
     if tiff_unix_time < datetime.strptime(filter_date, '%Y%m%d').timestamp():
-                # print(datetime.fromtimestamp(tiff_unix_time))
-                creation_offset += 360
-
-    # print(trial_tiff_path.name)
-    # print(tiff_date_time)
-    # print()
+        creation_offset += 360
 
     min_diff = None
     min_diff_path = None

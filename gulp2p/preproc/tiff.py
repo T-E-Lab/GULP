@@ -255,10 +255,9 @@ class Tiff:
         num_fb_frames = metadata['num_fb_frames']
 
         # Load the tiff data
-        stack = self.scanimage_tiff_reader.data()
+        stack = np.copy(self.scanimage_tiff_reader.data())
 
         # Reshape the volume to reflect the experimental parameters
-        #TODO: validate it reshapes non scanimage tiffs correctly
         stack = stack.reshape(size_t, size_z, size_c, size_y, size_x)
         self.metadata['dimension_order'] = 'TZCYX'
 

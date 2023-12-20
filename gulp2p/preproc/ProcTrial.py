@@ -8,39 +8,60 @@ from matplotlib.colors import CenteredNorm
 import numpy as np
 import pandas as pd
 import pingouin
-
+from functools import cached_property
 
 from unityvr.preproc import logproc as lp
 from unityvr.analysis import posAnalysis, align2img
-from gulp2p.preproc import utils as utils
+from gulp2p import preproc
 from gulp2p.preproc import ImagingPreProc as iPP
 from gulp2p.preproc import ROIs as ROIs
+from gulp2p.config import load_config
 
 class ProcTrial():
-    def __init__(self, path):
-        """_summary_
+    CONFIG_DICT = load_config(config_file=None)
+    PROC_DAT_FOLDER = CONFIG_DICT['proc_dat_folder']
 
-        Args:
-            path (Path): path to pickle file of fly trials
-        """
-        self.path = Path(path)
-        self.load_data()
+    def __init__(self, path):
+        self.path = Path(path) # path (Path): path to tiff file of fly trials
+        self.name = self.path.stem
+        self.data = self.load_data()
+        self.num_rois = self.get_num_rois()
 
     # Loading / util functions
 
     def load_data(self):
+        # Get preprocessed path from tiff path
+        pickle_path = preproc.utils.getPicklePath(self.path, self.PROC_DAT_FOLDER)
+
         # Load data from path
-        self.data = utils.loadProcData(self.path)
+        self.exptDat = preproc.utils.loadProcData(pickle_path)
+        self.expDf = self.exptDat['expDf']
+        return 
+    
+    def load_data(self, proc_if_missing=False, prev_rois=None, proc_dat_folder=None) -> None:
+        if proc_dat_folder is None:
+            proc_dat_folder = self.PROC_DAT_FOLDER
+
+        pickle_nm = utils.getPicklePath(self.path, proc_dat_folder)
+
+        if not os.path.isfile(pickle_nm):
+            if proc_if_missing:
+                trial_data = gPP.process_trial(self.path, proc_dat_folder, prev_rois=prev_rois)
+                utils.saveTrials({self.path: trial_data}, proc_dat_folder)
+            else:
+                error_text = ("Trial has not been processed, so no processed data file exists.\n"
+                              + "set proc_if_missing to True to process trial if it doesn't exist\n")
+                raise RuntimeError(error_text)
+
+        self.data = utils.loadProcData(pickle_nm)
+
+        # Set peak_roi
+        if self.data.get('needle_roi') is not None:
+            self.peak_roi = self.data['needle_roi']
 
     def get_num_rois(self):
-        # TODO: define self.df
-        df = self.df
-        count = 0
-        for col in df.columns:
-            if (col[:3] == "roi"):
-                count += 1
-        return count
-    
+        return len(self.exptDat['allROIs'])
+
     def shift_elements(self, arr, num, fill_value=np.nan):
         arr = np.roll(arr,num)
         if num < 0:
@@ -48,7 +69,6 @@ class ProcTrial():
         elif num > 0:
             arr[:num] = fill_value
         return arr
-
 
     # Analysis Functions
 
@@ -68,7 +88,6 @@ class ProcTrial():
 
             corr = np.corrcoef(lagged_a, lagged_v)[0,1]
             corrs.append(corr)
-
         return corrs
 
     def get_roi_angles(num_rois):
