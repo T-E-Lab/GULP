@@ -17,6 +17,17 @@ from gulp2p.preproc import ImagingPreProc as iPP
 from gulp2p.preproc import ROIs as ROIs
 from gulp2p.config import load_config
 
+
+def get_tiff_metadata_dict(proc_dat_folder):
+    # Return a dictionary of all tiff metadata.
+    # Create dictionary if not found.
+    # dictionary keys are tiff paths and values are tiff metadata.
+    # During trial processing save the tiff path and metadata in dictionary.
+    # Dictionary is used for quick access to tiff metadata such as date
+    # so that the pickle file can be found since it requires the date and time of a tiff 
+    # to decide where it is stored and how it is named.
+    pass
+
 class ProcTrial():
     CONFIG_DICT = load_config(config_file=None)
     PROC_DAT_FOLDER = CONFIG_DICT['proc_dat_folder']
@@ -25,7 +36,6 @@ class ProcTrial():
         self.path = Path(path) # path (Path): path to tiff file of fly trials
         self.name = self.path.stem
         self.data = self.load_data()
-        self.num_rois = self.get_num_rois()
 
     # Loading / util functions
 

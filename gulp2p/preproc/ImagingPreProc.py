@@ -444,9 +444,9 @@ def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
                'rawf':rawF_G,
                'deltaf': DF_G,
                'metadata': tiff.metadata,
+               'syncdf': None,
               }
     # TODO: make MIP, rawF, and DF multichannel if image is multichannel.
-
 
     # Pickle and save the data
     #TODO: Add overwrite protection
