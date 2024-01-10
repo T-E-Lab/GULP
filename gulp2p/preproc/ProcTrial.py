@@ -4,7 +4,7 @@ from pathlib import Path
 import pickle
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon, Rectangle
-from matplotlib.colors import CenteredNorm 
+from matplotlib.colors import CenteredNorm
 import numpy as np
 import pandas as pd
 import pingouin
@@ -15,23 +15,9 @@ from unityvr.analysis import posAnalysis, align2img
 from gulp2p import preproc
 from gulp2p.preproc import ImagingPreProc as iPP
 from gulp2p.preproc import ROIs as ROIs
-from gulp2p.config import load_config
-
-
-def get_tiff_metadata_dict(proc_dat_folder):
-    # Return a dictionary of all tiff metadata.
-    # Create dictionary if not found.
-    # dictionary keys are tiff paths and values are tiff metadata.
-    # During trial processing save the tiff path and metadata in dictionary.
-    # Dictionary is used for quick access to tiff metadata such as date
-    # so that the pickle file can be found since it requires the date and time of a tiff 
-    # to decide where it is stored and how it is named.
-    pass
+from gulp2p.config import PROC_DAT_FOLDER
 
 class ProcTrial():
-    CONFIG_DICT = load_config(config_file=None)
-    PROC_DAT_FOLDER = CONFIG_DICT['proc_dat_folder']
-
     def __init__(self, path):
         self.path = Path(path) # path (Path): path to tiff file of fly trials
         self.name = self.path.stem
@@ -41,7 +27,7 @@ class ProcTrial():
 
     def load_data(self):
         # Get preprocessed path from tiff path
-        pickle_path = preproc.utils.getPicklePath(self.path, self.PROC_DAT_FOLDER)
+        pickle_path = preproc.utils.getPicklePath(self.path, PROC_DAT_FOLDER)
 
         # Load data from path
         self.exptDat = preproc.utils.loadProcData(pickle_path)
@@ -50,7 +36,7 @@ class ProcTrial():
     
     def load_data(self, proc_if_missing=False, prev_rois=None, proc_dat_folder=None) -> None:
         if proc_dat_folder is None:
-            proc_dat_folder = self.PROC_DAT_FOLDER
+            proc_dat_folder = PROC_DAT_FOLDER
 
         pickle_nm = utils.getPicklePath(self.path, proc_dat_folder)
 
