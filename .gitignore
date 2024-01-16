@@ -2,6 +2,7 @@
 settings.yaml
 .virtual_documents/
 .vscode/
+results/videos
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

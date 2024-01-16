@@ -6,8 +6,11 @@ import os.path
 from pathlib import Path
 from functools import cached_property
 import numpy as np
+import xarray as xr
 
 from gulp2p.preproc import utils
+
+# TODO: Add max intensity projection attribute
 
 class Tiff:
     """A class to handle loading tiffs and metadata.

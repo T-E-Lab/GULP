@@ -9,9 +9,9 @@ from datetime import datetime
 from pathlib import Path
 import warnings
 
+from gulp2p.config import TIFF_METADATA_DICT_PATH
 
-
-def loadFileNames(single_file=False, title=None):
+def load_file_names(single_file=False, title=None):
     """Prompt user to select one or multiple files
 
     Returns:
@@ -29,6 +29,30 @@ def loadFileNames(single_file=False, title=None):
     else:
         trial_file_nms = filedialog.askopenfilenames(title=title)
     return trial_file_nms
+
+def select_file_path(prompt="Select File", initialdir=None):
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", 1)
+
+    file_path_str = filedialog.askopenfilename(title=prompt, initialdir=initialdir)
+    if file_path_str == "":
+        print("File selection canceled")
+        return None
+    file_path = Path(file_path_str)
+    return file_path
+
+def select_folder_path(prompt="Select Folder", initialdir=None):
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", 1)
+
+    dir_path_str = filedialog.askdirectory(title=prompt, initialdir=initialdir)
+    if dir_path_str == "":
+        print("Folder selection canceled")
+        return None
+    dir_path = Path(dir_path_str)
+    return dir_path
 
 def loadTrialInfo(rootDirs):
     """
@@ -56,8 +80,34 @@ def loadTrialInfo(rootDirs):
 
     return trials
 
+def get_tiff_metadata_dict():
+    # Return a dictionary of all tiff metadata.
+    # Create dictionary if not found.
+    # dictionary keys are tiff paths and values are tiff metadata.
+    # During trial processing save the tiff path and metadata in dictionary.
+    # Dictionary is used for quick access to tiff metadata such as date
+    # so that the pickle file can be found since it requires the date and time of a tiff
+    # to decide where it is stored and how it is named.
 
-def formatDate(year, month):
+    # Create pickle file if it does not exit
+    if not TIFF_METADATA_DICT_PATH.exists():
+        tiff_metadata_dict = {}
+        with open(TIFF_METADATA_DICT_PATH, 'wb+') as file:
+            pickle.dump(tiff_metadata_dict, file)
+
+    # Load tiff
+    with open(TIFF_METADATA_DICT_PATH, 'rb+') as file:
+        tiff_metadata_dict = pickle.load(file)
+
+    # Return dict
+    return tiff_metadata_dict
+
+def set_tiff_metadata_dict(tiff_metadata_dict):
+    # Save dict
+    with open(TIFF_METADATA_DICT_PATH, 'wb+') as file:
+        pickle.dump(tiff_metadata_dict, file)
+
+def format_date(year, month):
     """Formats year and month together into form YYYY_MM
 
     Args:
@@ -70,7 +120,7 @@ def formatDate(year, month):
     formatted_date = f"{year}_{month:02d}"
     return formatted_date
 
-def loadProcData(proc_data_fn):
+def load_proc_data(proc_data_fn):
     """Return processed data
 
     Args:
@@ -84,13 +134,13 @@ def loadProcData(proc_data_fn):
         data = pickle.load(infile)
     return data
 
-def saveTrials(expt_dat, folderNm, subfolder=None):
+def save_trials(expt_dat, folderNm, subfolder=None):
     # Given a dictionary of trials,
     # save each trial in a seperate pickle file
     for trialNm, trial in expt_dat.items():
         if subfolder is None:
-            trial_date = getDate(trialNm)
-            year_month = formatDate(trial_date.year, trial_date.month)
+            trial_date = get_date(trialNm)
+            year_month = format_date(trial_date.year, trial_date.month)
             subfolder = year_month
         dirPath = os.path.join(folderNm, year_month)
         os.makedirs(dirPath, exist_ok=True)
@@ -101,7 +151,7 @@ def saveTrials(expt_dat, folderNm, subfolder=None):
         with open(fullPath, 'wb') as outfile:
             pickle.dump(trial, outfile)
 
-def getDate(path):
+def get_date(path):
     """Get the date for a tiff file
 
     Args:
@@ -131,7 +181,7 @@ def getDate(path):
     return date
 
 
-def getPicklePath(trialNm, folderNm, trial_date=None):
+def get_pickle_path(trialNm, folderNm, trial_date=None):
     """Create path for pickle file. 
     Under the folder given, the pickle file is stored in a year and month folder (year_month)
 
@@ -143,8 +193,8 @@ def getPicklePath(trialNm, folderNm, trial_date=None):
         str: path of pickle file
     """
     if trial_date is None:
-        trial_date = getDate(trialNm)
-    year_month = formatDate(trial_date.year, trial_date.month)
+        trial_date = get_date(trialNm)
+    year_month = format_date(trial_date.year, trial_date.month)
     subfolder = year_month
     dirPath = Path(folderNm, subfolder)
 
@@ -154,7 +204,7 @@ def getPicklePath(trialNm, folderNm, trial_date=None):
     return fullPath
 
 
-def saveDFDat(fileNm, expt, expt_dat):
+def save_dat(fileNm, expt, expt_dat):
     """
     Save a dictionary of the processed data
 

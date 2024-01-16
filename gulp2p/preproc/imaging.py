@@ -46,7 +46,6 @@ def plotMeanPlane(stack, col = 0, ncols = 4):
 
     return mean_fig
 
-
 def stackToMIP(stack, slices):
     """
     Convert a stack to a series of maximum intensity projections (MIPs),
@@ -71,7 +70,6 @@ def stackToMIP(stack, slices):
 
     return np.squeeze(div_stack_MIP)
 
-
 def getSlicesFromStack():
     """
     Specify which slices to consider in the stack
@@ -90,7 +88,6 @@ def getSlicesFromStack():
         slices[vol+1] = int(input('last slice in volume ' + str(vol+1) + '?'))
 
     return slices
-
 
 def tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, stack, sigma):
     """ Motion correct a tiff stack by using phase cross correlation
@@ -140,7 +137,6 @@ def tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, stack, sigma):
 
     return [shift, stackMC]
 
-
 def divStackMIP(stack, col = 0):
     """
     Slice a stack into volumes and get the MIPs of those volumes
@@ -164,7 +160,6 @@ def divStackMIP(stack, col = 0):
     div_stack_MIP = stackToMIP(stack, slices)
 
     return [slices, div_stack_MIP]
-
 
 def motionCorrectSlicedStack(div_stack_MIP, num_ref_img = 100, upsample_factor = 20, sigma = 2):
     """
@@ -204,7 +199,6 @@ def motionCorrectSlicedStack(div_stack_MIP, num_ref_img = 100, upsample_factor =
         corrected_stacks = corrected_stack_1
     return corrected_stacks
 
-
 def getROIs(stack, roiFN, oldROIs, oldType):
     """ Use napari to get ROIs from a stack, using a given ROI function
     """
@@ -222,7 +216,6 @@ def getROIs(stack, roiFN, oldROIs, oldType):
     [napOut, allROIs, allMasks] = roiFN(viewer, stack)
 
     return [napOut, allROIs, allMasks]
-
 
 def FfromROIsDiv(stack, all_masks):
     """ Calculate the raw fluorescence in each ROI in all ROIS on the given stack
@@ -243,7 +236,6 @@ def FfromROIsDiv(stack, all_masks):
             rawF[fm,roi] = np.multiply(fmNow[vol,:,:], np.transpose(all_masks[all_masks['roi'] == roi]['mask'][0])).sum()
 
     return rawF
-
 
 def FfromROIs(stack, allMasks, frameIdx=0):
     """Calculate the raw fluorescence in each ROI in all ROIS on the given stack
@@ -269,7 +261,6 @@ def FfromROIs(stack, allMasks, frameIdx=0):
 
     return rawF
 
-
 def DFoF(rawF):
     """ Calculate the DF/F given a raw fluorescence signal
     The baseline fluorescence is the mean of the lowest 10% of fluorescence signals
@@ -284,7 +275,6 @@ def DFoF(rawF):
         DF[:,r] = rawF[:,r]/Fbaseline-1
 
     return DF
-
 
 def DFoFfromfirstfms(rawF, fm_interval, baseline_sec=10):
     """Calculate the DF/F given a raw fluorescence signal
@@ -315,7 +305,6 @@ def DFoFfromfirstfms(rawF, fm_interval, baseline_sec=10):
 
     return DF
 
-
 def incr_bbox(bounding_box, image_shape, scale_factor):
     """Scale a bounding box keeping it centered at the same spot
 
@@ -342,7 +331,6 @@ def incr_bbox(bounding_box, image_shape, scale_factor):
         if view_box[dim, 1] > image_shape[dim]:
             view_box[dim, 1] = image_shape[dim]
     return view_box
-
 
 def get_bbox(rois, image_shape, scale_factor=1.5):
     """Given a list of rois, return a bounding box, a scale factor of 1 is a tight box
@@ -374,7 +362,6 @@ def get_bbox(rois, image_shape, scale_factor=1.5):
     view_box = incr_bbox(bounding_box, image_shape, scale_factor)
     return view_box
 
-
 def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
     """Draw rois over brain regions in napari.
     Returns dictionary with florescence data.
@@ -393,6 +380,11 @@ def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
     tiff = Tiff(file)
     stack = tiff.stack
     size_c = tiff.metadata['SizeC']
+
+    # Save tiff metadata in tiff_metadata_dict pickle file
+    tiff_metadata_dict = preproc.utils.get_tiff_metadata_dict()
+    tiff_metadata_dict[tiff.path] = tiff.metadata
+    preproc.utils.set_tiff_metadata_dict(tiff_metadata_dict)
 
     # Plot the mean of each plane
     fig_mean_planes = plotMeanPlane(stack,col=0) # col=1 to plot the second channel if it exists

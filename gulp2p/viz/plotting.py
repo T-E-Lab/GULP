@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon
 # import matplotlib.lines as mlines
 from skimage.measure import block_reduce 
 
@@ -260,7 +261,7 @@ def plot_grating_stim(uvr, fig=None, figsize=None):
 
 def plot_closed_loop_stim(uvr, fig=None, figsize=None):
     # Plot angular head direction histogram and fly path
-    
+
     # Check if uvr object has derived head angle in rads, if not compute them
     if 'radangle' not in uvr.posDf.columns:
         posAnalysis.position(uvr, derive=True)
@@ -304,5 +305,47 @@ def plot_closed_loop_stim(uvr, fig=None, figsize=None):
         return fig, axd
     else:
         return axd
+
+
+
+##
+# Imaging Plotting
+##
+
+def plot_roi(trial_dat, panel, title="Protocerebral Bridge\n glomeruli (ROI's)", full_img=False):
+    # Get pixel dimensions
+    trial_nm = trial_dat.get('name', trial_dat.get('trialName'))
+    # pixel_dims = trial_dat.get('pixel_dims' ,iPP.getPixelDims(trial_nm))
+    rois = trial_dat.get('rois', trial_dat.get('allROIs'))
+    mean_stack = trial_dat.get('stack_mip', trial_dat.get('meanMIP_G'))
+
+    view_box = iPP.get_bbox(rois, image_shape=mean_stack.shape, scale_factor=1.5)
+    panel.imshow(mean_stack)
+    panel.axis('off')
+
+    # Draw ROI's
+    for j, r in enumerate(rois):
+        X_IDX = 0
+        Y_IDX = 1
+        panel.add_patch(
+            Polygon(
+                [[pt[Y_IDX], pt[X_IDX]] for pt in r],
+                closed=True,
+                fill=False,
+                edgecolor=(1, 1, 1, 0.5),
+                linewidth=0.5
+            )
+        )
+        panel.text(
+            r[:, Y_IDX].mean(),
+            r[:, X_IDX].mean(),
+            str(j + 1),
+            dict(ha='center', va='center', fontsize=3.5, color='w'),
+        )
+
+    if not full_img:
+        panel.set_xlim(view_box[1])
+        panel.set_ylim(np.flip(view_box[0]))
+    panel.set_title(title)
 
 
