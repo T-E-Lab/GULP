@@ -176,9 +176,11 @@ def plot_dark_stim(uvr, fig=None, figsize=None):
     if fig is None:
         fig, axd = plt.subplot_mosaic(mosaic, figsize=figsize,
                                       gridspec_kw=gridspec_kw)
+        return_fig = True
     else:
         axd = fig.subplot_mosaic(mosaic,
                                  gridspec_kw=gridspec_kw)
+        return_fig = False
 
     # Plot fly path
     plot_path(axd['path'], uvr)
@@ -195,7 +197,7 @@ def plot_dark_stim(uvr, fig=None, figsize=None):
 
     fig.suptitle("Dark Condition")
 
-    if fig is None:
+    if return_fig:
         return fig, axd
     else:
         return axd
@@ -209,7 +211,7 @@ def plot_grating_stim(uvr, fig=None, figsize=None):
     # Check if uvr object has derived head angle in rads, if not compute them
     if 'radangle' not in uvr.posDf.columns:
         posAnalysis.position(uvr, derive=True)
-    # Check if unwrapped angle included, if not compute it 
+    # Check if unwrapped angle included, if not compute it
     if 'unwrapped_radangle' not in uvr.posDf.columns:
         uvr.posDf['unwrapped_radangle'] = np.unwrap(uvr.posDf.radangle)
 
@@ -221,9 +223,11 @@ def plot_grating_stim(uvr, fig=None, figsize=None):
     if fig is None:
         fig, axd = plt.subplot_mosaic(mosaic, figsize=figsize,
                                       gridspec_kw=gridspec_kw)
+        return_fig = True
     else:
         axd = fig.subplot_mosaic(mosaic,
                                  gridspec_kw=gridspec_kw)
+        return_fig = False
     
     # Plot fly path
     plot_path(axd['path'], uvr)
@@ -254,7 +258,7 @@ def plot_grating_stim(uvr, fig=None, figsize=None):
 
     fig.suptitle("Moving Grating Condition")
 
-    if fig is None:
+    if return_fig:
         return fig, axd
     else:
         return axd
@@ -272,10 +276,13 @@ def plot_closed_loop_stim(uvr, fig=None, figsize=None):
     # Create subplots
     if fig is None:
         fig = plt.figure(figsize=figsize)
+        return_fig = True
+    else:
+        return_fig = False
     axd = {}
     axd['path'] = fig.add_subplot(1,2,1)
-    axd['hist_angle'] = fig.add_subplot(1,2,2, 
-                                        projection='polar', 
+    axd['hist_angle'] = fig.add_subplot(1,2,2,
+                                        projection='polar',
                                         theta_offset=np.pi/2)
 
     # Plot fly path
@@ -301,12 +308,105 @@ def plot_closed_loop_stim(uvr, fig=None, figsize=None):
 
     fig.suptitle("Closed Loop Condition")
 
-    if fig is None:
+    if return_fig:
         return fig, axd
     else:
         return axd
 
+def plot_general_stim(uvr, fig=None, figsize=None):
+    # Plot rotational velocity histograms for each stimuli speed and plot fly path
 
+    # Check if uvr object has computed velocities, if not compute them
+    if not {'vT', 'vR'}.issubset(uvr.posDf.columns):
+        uvr.posDf = posAnalysis.computeVelocities(uvr.posDf)
+    # Check if uvr object has derived head angle in rads, if not compute them
+    if 'radangle' not in uvr.posDf.columns:
+        uvr.posDf = posAnalysis.position(uvr, derive=True)
+    # Check if unwrapped angle included, if not compute it
+    if 'unwrapped_angle' not in uvr.posDf.columns:
+        uvr.posDf['unwrapped_angle'] = np.unwrap(uvr.posDf.angle, period=360)
+
+    # Create mosaic for plot layout
+    mosaic = [['path', 'angle_trace', 'angle_trace'],
+              ['path', 'hist_rot', 'hist_forw'],
+              ['path', 'hist_angle', 'hist_angle']]
+    gridspec_kw = {"hspace": 0.5, "wspace": 0.55,
+                   "width_ratios": [4,1,1],
+                   "height_ratios": [1,1,2]}
+    per_subplot_kw={"hist_angle": {"projection": "polar",
+                                   "theta_offset": np.pi/2}}
+    if fig is None:
+        fig, axd = plt.subplot_mosaic(mosaic, figsize=figsize,
+                                      gridspec_kw=gridspec_kw,
+                                      per_subplot_kw=per_subplot_kw)
+        return_fig = True
+    else:
+        axd = fig.subplot_mosaic(mosaic,
+                                 gridspec_kw=gridspec_kw,
+                                 per_subplot_kw=per_subplot_kw)
+        return_fig = False
+
+    # Plot fly path
+    plot_path(axd['path'], uvr)
+
+    # Plot angle over time
+    axd['angle_trace'].plot(uvr.posDf.time, uvr.posDf.unwrapped_angle)
+    axd['angle_trace'].set_xticks(np.arange(0, uvr.posDf.time.iloc[-1]+1, 60))
+    ymin = uvr.posDf.unwrapped_angle.min()
+    ymax = uvr.posDf.unwrapped_angle.max()
+
+    tick_size = np.floor((ymax - ymin)/5/360)*360
+    if tick_size < 360:
+        tick_size = 360
+    yticks = np.arange(np.ceil(ymin/tick_size)*tick_size,
+                       np.floor(ymax/tick_size)*tick_size,
+                       tick_size)
+    axd['angle_trace'].set_yticks(yticks)
+    axd['angle_trace'].set_xlabel("Time (s)")
+    axd['angle_trace'].set_ylabel("Head Angle (deg)")
+
+    # Plot rotational velocity histogram
+    axd['hist_rot'].hist(uvr.posDf.vR, bins=21)
+    axd['hist_rot'].set_xlabel("Rotational Velocity (°/s)")
+    axd['hist_rot'].set_ylabel("Counts")
+
+    # Plot forward velocity histogram
+    axd['hist_forw'].hist(uvr.posDf.vT, bins=21)
+    axd['hist_forw'].set_xlabel("Forward Velocity (cm/s)")
+    axd['hist_forw'].set_yticks([])
+
+    # Plot histogram of head direction when the fly is moving (filter out low velocity)
+    radangle_filt = uvr.posDf[uvr.posDf['vT_filt'] > uvr.posDf['vT_filt'].quantile(0.25)]['radangle']
+
+    counts, bins = np.histogram(radangle_filt, bins = int(360/15))
+    axd['hist_angle'].bar(bins[:-1], counts, align='edge', width=np.diff(bins))
+
+    axd['hist_angle'].set_xlabel("Head direction during movement")
+
+    ## Set origin of hist so it looks like a donut
+    axd['hist_angle'].set_rorigin(-1*max(counts))
+
+    ## Set tick marks
+    axd['hist_angle'].set_xticks(np.pi/180. * np.linspace(180,  -180, 8, endpoint=False))
+    axd['hist_angle'].set_thetalim(-np.pi, np.pi)
+
+    yticks = range(0, round(max(counts), -3), 1000)
+    axd['hist_angle'].set_yticks(yticks)
+    
+    # Share y axis
+    ylim_forw = axd['hist_forw'].get_ylim()
+    ylim_rot = axd['hist_rot'].get_ylim()
+    ylim = [min(ylim_forw[0], ylim_rot[0]), max(ylim_forw[1], ylim_rot[1])]
+
+    axd['hist_forw'].set_ylim(ylim)
+    axd['hist_rot'].set_ylim(ylim)
+
+    # fig.suptitle("Moving Grating Condition")
+
+    if return_fig:
+        return fig, axd
+    else:
+        return axd
 
 ##
 # Imaging Plotting
