@@ -5,11 +5,14 @@ from os import listdir
 from os.path import sep
 import pickle
 import tifffile as tf
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import warnings
+import re
+import cv2
 
 from gulp2p.config import TIFF_METADATA_DICT_PATH
+from gulp2p.preproc.tiff import Tiff
 
 def load_file_names(single_file=False, title=None):
     """Prompt user to select one or multiple files
@@ -106,6 +109,24 @@ def set_tiff_metadata_dict(tiff_metadata_dict):
     # Save dict
     with open(TIFF_METADATA_DICT_PATH, 'wb+') as file:
         pickle.dump(tiff_metadata_dict, file)
+
+def save_tiff_metadata(tiff):
+    # Save tiff metadata in tiff_metadata_dict pickle file
+    tiff_metadata_dict = get_tiff_metadata_dict()
+    tiff_metadata_dict[tiff.path] = tiff.metadata
+    set_tiff_metadata_dict(tiff_metadata_dict)
+
+def get_timestamp_from_string(string):
+    date_pattern = r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}"
+    date_fmt = '%Y-%m-%d_%H-%M-%S'
+    date_match = re.search(date_pattern, string)
+    if date_match is None:
+        alt_date_pattern = r"\d{8}_\d{6}"
+        date_fmt = '%Y%m%d_%H%M%S'
+        date_match = re.search(alt_date_pattern, string)
+    date_str = date_match.group()
+    timestamp = datetime.strptime(date_str, date_fmt).timestamp()
+    return timestamp
 
 def format_date(year, month):
     """Formats year and month together into form YYYY_MM
@@ -228,80 +249,221 @@ def save_dat(fileNm, expt, expt_dat):
     with open(fileNm, 'wb') as outfile:
         pickle.dump(allDat, outfile)
 
-def get_creation_time(trial_tiff_path):
+def tail(file_path, lines=1, _buffer=4098):
+    """Tail a file and get X lines from the end
+    https://stackoverflow.com/questions/136168/get-last-n-lines-of-a-file-similar-to-tail
+    """
+    # Open file as binary to allow negative seeks
+    with open(file_path, 'rb') as file:
+        # place holder for the lines found
+        lines_found = []
+
+        # block counter will be multiplied by buffer
+        # to get the block size from the end
+        block_counter = -1
+
+        # loop until we find X lines
+        while len(lines_found) < lines:
+            try:
+                file.seek(block_counter * _buffer, os.SEEK_END)
+            except IOError:  # either file is too small, or too many lines requested
+                file.seek(0)
+                lines_found = [line.decode('utf-8') for line in file.readlines()]
+                break
+
+            lines_found = [line.decode('utf-8') for line in file.readlines()]
+
+            # decrement the block counter to get the
+            # next X bytes
+            block_counter -= 1
+
+    return lines_found[-lines:]
+
+def get_bhv_length(bhv_path):
+    num_lines = 10
+    while True:
+        end_lines = tail(bhv_path, num_lines)
+        for line in end_lines[::-1]:
+            if "timeSecs" in line:
+                return float(line.split(':')[-1].strip(" ,\n"))
+        # Searched whole file and length not found.
+        # This works since tail will return all the lines in a file if you ask for more than is in the file.
+        if num_lines > len(end_lines):
+            return None
+        num_lines *= 2
+
+def get_vid_length(vid_path):
+    # https://stackoverflow.com/questions/3844430/how-to-get-the-duration-of-a-video-in-python
+    import ffmpeg
+    info=ffmpeg.probe(vid_path.as_posix())
+    try:
+        duration=info['format']['duration']
+    except KeyError:
+        # Video metadata needs to be fixed by ffmpeg
+        raise NotImplementedError("Video metadata needs to be fixed by ffmpeg")
+    return duration
+
+def get_creation_time(file_path):
     # If the tiff was copied to another system its creation date will get reset but not other metadata.
     # In these cases use modification time - estimated length as tiff creation time.
     # Length of trial can be estimated with fm_interval and num of frames.
 
-    ctime = os.path.getctime(trial_tiff_path)
-    mtime = os.path.getmtime(trial_tiff_path)
+    # Modified before created
+    # This means creation date is innacurate and needs to be estimated
+    if file_path.suffix == ".tif":
+        return Tiff(file_path).metadata['data'].timestamp()
+    elif file_path.suffix == ".json":
+        return get_timestamp_from_string(file_path.name)
+
+    ctime = os.path.getctime(file_path)
+    mtime = os.path.getmtime(file_path)
     if ctime < mtime:
         # Expected result
         return ctime
-    
-    # Modified before created
-    # This means creation date is innacurate and needs to be estimated
-    #TODO: Use frame interval and num of frames OR volume rate and num of vols to get length of tiff.
-    tiff_length = 6*60 # Using 6 minutes as placeholder tiff length
-    ctime -= tiff_length
+    else:
+        error_str = "Creation date is innacurate, and there is currently no method to estimate the time it took to record data for this file"
+        raise RuntimeError(error_str)
 
-    return ctime
-
-def get_bhv_path(trial_tiff_path, bhv_data_folder,
-                 max_creation_delay=360, min_file_mb=2.5,
-                 creation_offset=0, filter_date='20231201'):
-    """Find the corresponding behavioral data file of a tiff file.
+def get_overlap(range1, range2, relative=False):
+    """Get the overlap of 2 ranges.
+    https://stackoverflow.com/questions/3269434/whats-the-most-efficient-way-to-test-if-two-ranges-overlap
 
     Args:
-        trial_tiff_path (Path): Path to tiff file
-        bhv_data_folder (Path): Path to behavioral data folder
-        max_creation_delay (int, optional): Maximum delay in seconds (+ or -) between the tiff and bhv file. Defaults to 360.
-        min_file_mb (float, optional): Minimum file size in MB a bhv file can have. Defaults to 2.5.
-        creation_offset (int, optional): Time it took for the tiff file to get created once recording began. Defaults to 0.
-        filter_date (str, optional): Date when creation delay was fixed, tiffs from before get an additional offset of 360. Defaults to '20231201'.
+        range1 (Tuple[float, float]): First range
+        range2 (Tuple[float, float]): Second range
+        relative (bool): If True the returned range is relative to the range1.
 
     Returns:
-        Path: Path to behavioral data file.
+        Tuple[float, float]: Overlap of the ranges.
     """
+    start1, end1 = range1
+    start2, end2 = range2
+    # ranges must go from left to right
+    assert end1 - start1 >=0
+    assert end2 - start2 >=0
 
-    tiff_unix_time = get_creation_time(trial_tiff_path)
-    min(os.path.getctime(trial_tiff_path), os.path.getmtime(trial_tiff_path))
+    if start1 < start2:
+        overlap_start = start2
+    else:
+        overlap_start = start1
+    if end1 > end2:
+        overlap_end = end2
+    else:
+        overlap_end = end1
 
-    if tiff_unix_time < datetime.strptime(filter_date, '%Y%m%d').timestamp():
-        creation_offset += 360
+    if relative:
+        overlap_start -= start1
+        overlap_end -= start1
 
-    min_diff = None
-    min_diff_path = None
-    
+    if overlap_start < overlap_end:
+        return [overlap_start, overlap_end]
+
+def get_tiff_bhv_overlap(tiff, bhv_path):
+    """Get the overlap of the behavior and tiff file, relative to the tiff.
+
+    Args:
+        tiff (Tiff): tiff object. Function uses the tiff object since it caches length.
+        bhv_path (Path): Path to the bhv file.
+
+    Returns:
+        Tuple[float, float]: Overlap range relative to tiff.
+    """
+    tiff_start_time = tiff.metadata['date'].timestamp()
+    tiff_length = tiff.length
+    tiff_range = (tiff_start_time, tiff_start_time + tiff_length)
+
+    bhv_start_time = get_timestamp_from_string(bhv_path.name)
+    bhv_length = get_bhv_length(bhv_path)
+    bhv_range = (bhv_start_time, bhv_start_time + bhv_length)
+
+    return get_overlap(tiff_range, bhv_range, relative=True)
+
+def get_tiff_vid_overlap(tiff, vid_path):
+    """Get the overlap of the fictrac video and tiff file, relative to the tiff.
+
+    Args:
+        tiff (Tiff): tiff object. Function uses the tiff object since it caches length.
+        vid_path (Path): Path to the fictrac video.
+
+    Returns:
+        Tuple[float, float]: Overlap range relative to tiff.
+    """
+    tiff_start_time = tiff.metadata['date'].timestamp()
+    tiff_length = tiff.length
+    tiff_range = (tiff_start_time, tiff_start_time + tiff_length)
+
+    vid_start_time = get_timestamp_from_string(vid_path.name)
+    vid_length = get_vid_length(vid_path)
+    vid_range = (vid_start_time, vid_start_time + vid_length)
+
+    return get_overlap(tiff_range, vid_range, relative=True)
+
+def get_bhv_paths(tiff, bhv_data_folder):
+    """Find the corresponding behavioral data file(s) of a tiff file.
+    There can be multiple files if unityVR stimuli were run multiple times during one tiff acquisition.
+
+    Args:
+        tiff (Tiff): tiff object. Function uses the tiff object since it caches length.
+        bhv_data_folder (Path): Path to behavioral data folder
+
+    Returns:
+        list[Path]: Paths of behavioral data files that overlapped.
+    """
+    overlapping_bhv_paths = []
+    bhv_paths = []
+
+    tiff_ctime = tiff.metadata['date'].timestamp()
+
+    # Select only json files within 12 hours of tiff creation
     for bhv_path in bhv_data_folder.rglob('*'):
-        if bhv_path.is_file() and (bhv_path.suffix == '.json'):
-            # Log_2023-11-29_13-45-03.json
-            date_str = "_".join(bhv_path.stem.split('_')[1:])
-            date_fmt = '%Y-%m-%d_%H-%M-%S'
-            bhv_date_time = datetime.strptime(date_str, date_fmt).timestamp()
+        if not bhv_path.is_file():
+            continue
+        if bhv_path.suffix != '.json':
+            continue
+        if bhv_path.name == "SessionParameters.json":
+            continue
+        bhv_ctime = get_timestamp_from_string(bhv_path.name)
+        if bhv_ctime is None:
+            continue
+        if abs(bhv_ctime - tiff_ctime) < 12*60*60: # 0.5 days in seconds
+            bhv_paths.append(bhv_path)
+    # Search for overlapping behavioral files.
+    for bhv_path in bhv_paths:
+        if get_tiff_bhv_overlap(tiff, bhv_path) is not None:
+            overlapping_bhv_paths.append(bhv_path)
+    return overlapping_bhv_paths
 
-            diff = bhv_date_time - tiff_unix_time + creation_offset
-            abs_diff = abs(diff)
-            
-            file_mb = bhv_path.stat().st_size / (2**20)
-            if file_mb < min_file_mb:
-                # print(f"{bhv_path} is {file_mb} MB, which is smaller than min file size of {min_file_mb} MB")
-                continue
+def get_vid_paths(tiff, fictrac_video_folder):
+    """Find the corresponding fictrac video(s) of a tiff file.
+    There can be multiple files if fictrac ran multiple times during one tiff acquisition.
 
-            if min_diff is None:
-                min_diff = abs_diff
-                min_diff_path = bhv_path
-            
-            if abs_diff < min_diff:
-                min_diff = abs_diff
-                min_diff_path = bhv_path
+    Args:
+        tiff (Tiff): tiff object. Function uses the tiff object since it caches length.
+        fictrac_video_folder (Path): Path to fictrac video folder
 
-    # Pick smallest positive date as behavioral data as long as it is smaller than the creation delay.
-    if min_diff > max_creation_delay:
-        warnings.warn((f"Closest behavioral file\n"
-                       f"{min_diff_path}\n"
-                       f"is {diff} seconds from the creation of the tiff file.\n"
-                       f"This is above the max delay of {max_creation_delay}."),
-                       stacklevel=2)
-        return None
-    return min_diff_path
+    Returns:
+        list[Path]: Paths of fictrac video files that overlapped.
+    """
+    overlapping_vid_paths = []
+    vid_paths = []
+
+    tiff_ctime = tiff.metadata['date'].timestamp()
+
+    # Select only avi files within 12 hours of tiff creation
+    for vid_path in fictrac_video_folder.rglob('*'):
+        if not vid_path.is_file():
+            continue
+        if vid_path.suffix != '.avi':
+            continue
+        if vid_path.stat().st_size <= 100:
+            continue
+        vid_ctime = get_timestamp_from_string(vid_path.name)
+        if vid_ctime is None:
+            continue
+        if abs(vid_ctime - tiff_ctime) < 12*60*60: # 0.5 days in seconds
+            vid_paths.append(vid_path)
+    # Search for overlapping video files.
+    for vid_path in vid_paths:
+        if get_tiff_vid_overlap(tiff, vid_path) is not None:
+            overlapping_vid_paths.append(vid_path)
+    return overlapping_vid_paths

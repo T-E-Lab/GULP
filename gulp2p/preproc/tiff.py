@@ -4,13 +4,14 @@ import tifffile as tf
 from datetime import datetime
 import os.path
 from pathlib import Path
-from functools import cached_property
+from functools import cached_property, cache
 import numpy as np
 import xarray as xr
 
 from gulp2p.preproc import utils
 
-# TODO: Add max intensity projection attribute
+
+reshape_order = 'TZCYX'
 
 class Tiff:
     """A class to handle loading tiffs and metadata.
@@ -46,6 +47,7 @@ class Tiff:
             path (os.PathLike): Path to tiff file.
         """
         self.path = Path(path)
+
 
     @cached_property
     def scanimage_tiff_reader(self) -> ScanImageTiffReader:
@@ -121,12 +123,14 @@ class Tiff:
 
         # C, Z, and T Dimensions are grouped together in sequential order
         # stack needs to be reshaped using dimension info
-        metadata_dict['dimension_order'] = 'TYX'
+        # since the stack is reshaped during access, ignore the original order
+        metadata_dict['original_dim_order'] = 'TYX'
+        metadata_dict['dimension_order'] = reshape_order
 
         # Get pixel resolution in micrometers
         with tf.TiffFile(self.path) as tiff:
             resolution = tiff.pages.first.get_resolution(unit=tf.RESUNIT.MICROMETER.value)
-        
+
         metadata_dict['pixel_width'] = resolution[0]
         metadata_dict['width_unit'] = 'um'
         metadata_dict['pixel_height'] = resolution[1]
@@ -149,7 +153,8 @@ class Tiff:
             line_value = line.split('=')[-1].strip()
             # Dimension info
             if 'DimensionOrder' in line:
-                metadata_dict['dimension_order'] = line_value
+                metadata_dict['original_dim_order'] = line_value
+                metadata_dict['dimension_order'] = reshape_order
             if 'SizeC' in line:
                 metadata_dict['SizeC'] = int(line_value)
             if 'SizeT' in line:
@@ -273,3 +278,34 @@ class Tiff:
     @cached_property
     def stack(self) -> np.ndarray:
         return self.load_tiff()
+
+    @ cached_property
+    def length(self):
+        """Length of the tiff in seconds
+
+        Returns:
+            float: length of tiff in seconds
+        """
+        length = (self.metadata['SizeZ']
+                  * self.metadata['SizeC']
+                  * self.metadata['SizeT']
+                  * self.metadata['frame_interval'])
+        return length
+
+    def get_dim_axis(self, dim):
+        index = self.metadata['dimension_order'].index(dim)
+        return index
+
+    @cache
+    def get_mip_stack(self, motion_correct=True):
+        from gulp2p.preproc import imaging
+        zaxis = self.get_dim_axis('Z')
+        mip_stack = np.squeeze(np.max(self.stack, axis=zaxis))
+        if motion_correct:
+            numRefImg=50
+            upsampleFactor=20
+            sigma=2
+            locRefImg = round(mip_stack.shape[0]/12)# the initial position in the stack to use for the reference. (~1/12 through the video)
+            [shift, mc_stack] = imaging.tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, mip_stack, sigma)
+            mip_stack = mc_stack
+        return mip_stack

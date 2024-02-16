@@ -10,6 +10,7 @@ from skimage.measure import block_reduce
 # import unityvr.preproc.logproc as lp
 from unityvr.analysis import posAnalysis
 import unityvr.viz.utils as uvrvisutils
+from gulp2p import preproc
 
 def plot_colorbar(cax, F_plot, F_lims, cbarlabel):
     """Plot the colorbar for the given F_plot
@@ -419,7 +420,7 @@ def plot_roi(trial_dat, panel, title="Protocerebral Bridge\n glomeruli (ROI's)",
     rois = trial_dat.get('rois', trial_dat.get('allROIs'))
     mean_stack = trial_dat.get('stack_mip', trial_dat.get('meanMIP_G'))
 
-    view_box = iPP.get_bbox(rois, image_shape=mean_stack.shape, scale_factor=1.5)
+    view_box = preproc.imaging.get_bbox(rois, image_shape=mean_stack.shape, scale_factor=1.5)
     panel.imshow(mean_stack)
     panel.axis('off')
 

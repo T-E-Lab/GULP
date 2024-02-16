@@ -5,9 +5,9 @@
 # ex. "color: blue"
 
 # -- Processed data file output folder (pickle storage) --
-# to store in NAS use: Z:\GULP\Data\pickle
+# to store in NAS use: Z:\GULP\Data\pickle\preproc
 # to store in project use: ..\results\pickle
-proc_dat_folder: Z:\GULP\Data\pickle
+proc_dat_folder: Z:\GULP\Data\pickle\preproc
 
 # -- Napari Settings (ROI Drawing) --
 

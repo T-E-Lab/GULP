@@ -382,9 +382,7 @@ def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
     size_c = tiff.metadata['SizeC']
 
     # Save tiff metadata in tiff_metadata_dict pickle file
-    tiff_metadata_dict = preproc.utils.get_tiff_metadata_dict()
-    tiff_metadata_dict[tiff.path] = tiff.metadata
-    preproc.utils.set_tiff_metadata_dict(tiff_metadata_dict)
+    preproc.utils.save_tiff_metadata(tiff)
 
     # Plot the mean of each plane
     fig_mean_planes = plotMeanPlane(stack,col=0) # col=1 to plot the second channel if it exists
@@ -396,7 +394,7 @@ def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
     stack_MIP = stackToMIP(stack,slices)
 
     # Motion correct the MIP
-    locRefImg = round(stack_MIP.shape[0]/12)# the initial position in the stack to use for the reference
+    locRefImg = round(stack_MIP.shape[0]/12)# the initial position in the stack to use for the reference. (~1/12 through the video)
     # [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
     
     if size_c == 1:
@@ -415,9 +413,9 @@ def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
     
     # Get the ROIS - For EB wedges, there are a number of other possible ROI functions for different shapes
     if old_rois is not None:
-        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), preproc.ROIs.PolyROIs, old_rois, 'polygon')
+        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), preproc.rois.PolyROIs, old_rois, 'polygon')
     else:
-        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), preproc.ROIs.PolyROIs, [],'')
+        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), preproc.rois.PolyROIs, [],'')
     
     # Get the raw fluorescence
     rawF_G = np.zeros((stack_MC.shape[0],len(allMasks)))
