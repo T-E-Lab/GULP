@@ -380,10 +380,10 @@ def FfromROIs(stack, allMasks, frameIdx=0):
 
     # Step through each frame in the stack
     # https://stackoverflow.com/questions/1589706/iterating-over-arbitrary-dimension-of-numpy-array
-    for fm_num, frame in enumerate(np.moveaxis(stack, frameIdx, -1)):
+    for fm_num, frame in enumerate(np.moveaxis(stack, frameIdx, 0)):
         # Find the sum of the fluorescence in each ROI for the given frame
         for r in range(0,len(allMasks)):
-            rawF[fm_num,r] = np.multiply(frame, allMasks[r]).sum()
+            rawF[fm_num,r] = np.multiply(np.squeeze(frame), allMasks[r]).sum()
 
     return rawF
 
