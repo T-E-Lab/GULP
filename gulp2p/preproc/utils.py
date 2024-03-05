@@ -11,7 +11,7 @@ import warnings
 import re
 import cv2
 
-from gulp2p.config import TIFF_METADATA_DICT_PATH
+from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR, FICTRAC_DIR
 from gulp2p.preproc.tiff import Tiff
 
 def load_file_names(single_file=False, title=None):
@@ -57,7 +57,7 @@ def select_folder_path(prompt="Select Folder", initialdir=None):
     dir_path = Path(dir_path_str)
     return dir_path
 
-def loadTrialInfo(rootDirs):
+def load_trial_info(rootDirs):
     """
     Gets the experiment and trial information for calcium imaging experiments
 
@@ -82,39 +82,6 @@ def loadTrialInfo(rootDirs):
                 trials[e] = sorted([sep.join([d,dt,f]) for f in files_here if (('tif' in f) & (e.split(sep)[-1] in f))])
 
     return trials
-
-def get_tiff_metadata_dict():
-    # Return a dictionary of all tiff metadata.
-    # Create dictionary if not found.
-    # dictionary keys are tiff paths and values are tiff metadata.
-    # During trial processing save the tiff path and metadata in dictionary.
-    # Dictionary is used for quick access to tiff metadata such as date
-    # so that the pickle file can be found since it requires the date and time of a tiff
-    # to decide where it is stored and how it is named.
-
-    # Create pickle file if it does not exit
-    if not TIFF_METADATA_DICT_PATH.exists():
-        tiff_metadata_dict = {}
-        with open(TIFF_METADATA_DICT_PATH, 'wb+') as file:
-            pickle.dump(tiff_metadata_dict, file)
-
-    # Load tiff
-    with open(TIFF_METADATA_DICT_PATH, 'rb+') as file:
-        tiff_metadata_dict = pickle.load(file)
-
-    # Return dict
-    return tiff_metadata_dict
-
-def set_tiff_metadata_dict(tiff_metadata_dict):
-    # Save dict
-    with open(TIFF_METADATA_DICT_PATH, 'wb+') as file:
-        pickle.dump(tiff_metadata_dict, file)
-
-def save_tiff_metadata(tiff):
-    # Save tiff metadata in tiff_metadata_dict pickle file
-    tiff_metadata_dict = get_tiff_metadata_dict()
-    tiff_metadata_dict[tiff.path] = tiff.metadata
-    set_tiff_metadata_dict(tiff_metadata_dict)
 
 def get_timestamp_from_string(string):
     date_pattern = r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}"
@@ -155,75 +122,40 @@ def load_proc_data(proc_data_fn):
         data = pickle.load(infile)
     return data
 
-def save_trials(expt_dat, folderNm, subfolder=None):
+def save_trials(expt_dat, trial_date, subfolder=None):
     # Given a dictionary of trials,
     # save each trial in a seperate pickle file
     for trialNm, trial in expt_dat.items():
         if subfolder is None:
-            trial_date = get_date(trialNm)
             year_month = format_date(trial_date.year, trial_date.month)
             subfolder = year_month
-        dirPath = os.path.join(folderNm, year_month)
+        dirPath = Path(TRIAL_PICKLE_DIR, year_month)
         os.makedirs(dirPath, exist_ok=True)
 
         timestamp = trial_date.strftime("%Y%m%d-%H%M")
         basename = timestamp + '_' + Path(trialNm).stem + ".pickle"
-        fullPath = os.path.join(dirPath, basename)
+        fullPath = Path(dirPath, basename)
         with open(fullPath, 'wb') as outfile:
             pickle.dump(trial, outfile)
 
-def get_date(path):
-    """Get the date for a tiff file
-
-    Args:
-        path (str or pathlib.Path): path to tiff file
-
-    Returns:
-        datetime: time tiff was captured
-    """
-    # Load metadata
-    with tf.TiffFile(path) as tif:
-        imagej_metadata = tif.imagej_metadata
-
-    print(path)
-    # Search metadata for date
-    info = imagej_metadata.get('Info', None)
-    searchstr = "[Acquisition Parameters Common] ImageCaputreDate ="
-    date_str = None
-    for line in info.splitlines():
-        if searchstr in line:
-            date_str = line.split("=")[-1].strip()
-            date_str = date_str.replace('\'', '')
-            break
-    assert date_str is not None
-
-    date = datetime.fromisoformat(date_str)
-
-    return date
-
-
-def get_pickle_path(trialNm, folderNm, trial_date=None):
+def get_trial_pickle_path(path, trial_date):
     """Create path for pickle file. 
     Under the folder given, the pickle file is stored in a year and month folder (year_month)
 
     Args:
         folder (str): path to folder to store pickle file in
-        trialNm (str): filename of trial
+        path (Path): Path of tiff
 
     Returns:
-        str: path of pickle file
+        Path: path of pickle file
     """
-    if trial_date is None:
-        trial_date = get_date(trialNm)
     year_month = format_date(trial_date.year, trial_date.month)
     subfolder = year_month
-    dirPath = Path(folderNm, subfolder)
-
-    timestamp = trial_date.strftime("%Y%m%d-%H%M")
-    baseNm = timestamp + '_' + Path(trialNm).stem + ".pickle"
-    fullPath = Path(dirPath, baseNm)
-    return fullPath
-
+    dir_path = Path(TRIAL_PICKLE_DIR, subfolder)
+    timestamp = trial_date.strftime("%Y%m%d-%H%M%S")
+    base_name = f"{timestamp}_{path.stem}.pickle"
+    full_path = Path(dir_path, base_name)
+    return full_path
 
 def save_dat(fileNm, expt, expt_dat):
     """
@@ -248,6 +180,7 @@ def save_dat(fileNm, expt, expt_dat):
     # Save the data
     with open(fileNm, 'wb') as outfile:
         pickle.dump(allDat, outfile)
+
 
 def tail(file_path, lines=1, _buffer=4098):
     """Tail a file and get X lines from the end
@@ -297,7 +230,7 @@ def get_vid_length(vid_path):
     import ffmpeg
     info=ffmpeg.probe(vid_path.as_posix())
     try:
-        duration=info['format']['duration']
+        duration = float(info['format']['duration'])
     except KeyError:
         # Video metadata needs to be fixed by ffmpeg
         raise NotImplementedError("Video metadata needs to be fixed by ffmpeg")
@@ -315,8 +248,9 @@ def get_creation_time(file_path):
     elif file_path.suffix == ".json":
         return get_timestamp_from_string(file_path.name)
 
-    ctime = os.path.getctime(file_path)
-    mtime = os.path.getmtime(file_path)
+    file_stats = file_path.stat()
+    ctime = file_stats.st_ctime
+    mtime = file_stats.st_mtime
     if ctime < mtime:
         # Expected result
         return ctime
@@ -376,6 +310,9 @@ def get_tiff_bhv_overlap(tiff, bhv_path):
     bhv_length = get_bhv_length(bhv_path)
     bhv_range = (bhv_start_time, bhv_start_time + bhv_length)
 
+    # print(f"tiff_range: {tiff_range[0]-tiff_range[0]} <-> {tiff_range[1]-tiff_range[0]}")
+    # print(f"bhv_range: {bhv_range[0]-tiff_range[0]} <-> {bhv_range[1]-tiff_range[0]}")
+
     return get_overlap(tiff_range, bhv_range, relative=True)
 
 def get_tiff_vid_overlap(tiff, vid_path):
@@ -398,7 +335,7 @@ def get_tiff_vid_overlap(tiff, vid_path):
 
     return get_overlap(tiff_range, vid_range, relative=True)
 
-def get_bhv_paths(tiff, bhv_data_folder):
+def get_bhv_paths(tiff, bhv_data_folder=None):
     """Find the corresponding behavioral data file(s) of a tiff file.
     There can be multiple files if unityVR stimuli were run multiple times during one tiff acquisition.
 
@@ -409,6 +346,9 @@ def get_bhv_paths(tiff, bhv_data_folder):
     Returns:
         list[Path]: Paths of behavioral data files that overlapped.
     """
+    if bhv_data_folder is None:
+        bhv_data_folder = BHV_DATA_RAW_DIR
+
     overlapping_bhv_paths = []
     bhv_paths = []
 
@@ -429,11 +369,14 @@ def get_bhv_paths(tiff, bhv_data_folder):
             bhv_paths.append(bhv_path)
     # Search for overlapping behavioral files.
     for bhv_path in bhv_paths:
+        # Skip duplicate files (have the same name but different folder)
+        if bhv_path.name in [path.name for path in overlapping_bhv_paths]:
+            continue
         if get_tiff_bhv_overlap(tiff, bhv_path) is not None:
             overlapping_bhv_paths.append(bhv_path)
     return overlapping_bhv_paths
 
-def get_vid_paths(tiff, fictrac_video_folder):
+def get_vid_paths(tiff, fictrac_video_folder=None, vid_style="dbg"):
     """Find the corresponding fictrac video(s) of a tiff file.
     There can be multiple files if fictrac ran multiple times during one tiff acquisition.
 
@@ -444,6 +387,9 @@ def get_vid_paths(tiff, fictrac_video_folder):
     Returns:
         list[Path]: Paths of fictrac video files that overlapped.
     """
+    if fictrac_video_folder is None:
+        fictrac_video_folder = FICTRAC_DIR
+
     overlapping_vid_paths = []
     vid_paths = []
 
@@ -454,6 +400,8 @@ def get_vid_paths(tiff, fictrac_video_folder):
         if not vid_path.is_file():
             continue
         if vid_path.suffix != '.avi':
+            continue
+        if vid_style not in vid_path.stem:
             continue
         if vid_path.stat().st_size <= 100:
             continue
@@ -467,3 +415,8 @@ def get_vid_paths(tiff, fictrac_video_folder):
         if get_tiff_vid_overlap(tiff, vid_path) is not None:
             overlapping_vid_paths.append(vid_path)
     return overlapping_vid_paths
+
+def save_trial(trial):
+    pickle_path = get_trial_pickle_path(trial.path, trial.tiff_metadata.date)
+    with open(pickle_path, 'wb') as file:
+        pickle.dump(trial, file)
