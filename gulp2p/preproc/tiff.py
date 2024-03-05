@@ -7,9 +7,9 @@ from pathlib import Path
 from functools import cached_property, cache
 import numpy as np
 import xarray as xr
+import pickle
 
-from gulp2p.preproc import utils
-
+from gulp2p.config import TIFF_METADATA_DICT_PATH
 
 reshape_order = 'TZCYX'
 
@@ -118,7 +118,7 @@ class Tiff:
 
         # Get file size and date
         # date can vary depending on how it is saved
-        metadata_dict['date'] = datetime.fromtimestamp(utils.get_creation_time(self.path))
+        metadata_dict['date'] = datetime.fromtimestamp(self.path.stat().st_ctime)
         metadata_dict['file_size'] = os.path.getsize(self.path)
 
         # C, Z, and T Dimensions are grouped together in sequential order
@@ -235,10 +235,19 @@ class Tiff:
                 pixel_height (float): height of pixels in units from width_unit.
                 height_unit (str): units used to define height of pixels.
         """
+        # Check if the metadata has already been parsed and saved.
+        tiff_metadata_dict = get_tiff_metadata_dict()
+        metadata = tiff_metadata_dict.get(self.path)
+        if metadata is not None:
+            return metadata
+
+        # If it isn't, parse it and save it.
         if self.is_scanimage:
-            return self.get_scanimage_metadata()
+            metadata = self.get_scanimage_metadata()
         else:
-            return self.get_imagej_metadata()
+            metadata = self.get_imagej_metadata()
+        save_tiff_metadata(self.path, metadata)
+        return metadata
 
     def load_tiff(self) -> np.ndarray:
         """ Load in the tiff from self.path
@@ -306,6 +315,39 @@ class Tiff:
             upsampleFactor=20
             sigma=2
             locRefImg = round(mip_stack.shape[0]/12)# the initial position in the stack to use for the reference. (~1/12 through the video)
-            [shift, mc_stack] = imaging.tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, mip_stack, sigma)
+            [shift, mc_stack] = imaging.tif_motion_correct(numRefImg, locRefImg, upsampleFactor, mip_stack, sigma)
             mip_stack = mc_stack
         return mip_stack
+
+def get_tiff_metadata_dict():
+    # Return a dictionary of all tiff metadata.
+    # Create dictionary if not found.
+    # dictionary keys are tiff paths and values are tiff metadata.
+    # During trial processing save the tiff path and metadata in dictionary.
+    # Dictionary is used for quick access to tiff metadata such as date
+    # so that the pickle file can be found since it requires the date and time of a tiff
+    # to decide where it is stored and how it is named.
+
+    # Create pickle file if it does not exit
+    if not TIFF_METADATA_DICT_PATH.exists():
+        tiff_metadata_dict = {}
+        with open(TIFF_METADATA_DICT_PATH, 'wb+') as file:
+            pickle.dump(tiff_metadata_dict, file)
+
+    # Load tiff
+    with open(TIFF_METADATA_DICT_PATH, 'rb+') as file:
+        tiff_metadata_dict = pickle.load(file)
+
+    # Return dict
+    return tiff_metadata_dict
+
+def set_tiff_metadata_dict(tiff_metadata_dict):
+    # Save dict
+    with open(TIFF_METADATA_DICT_PATH, 'wb+') as file:
+        pickle.dump(tiff_metadata_dict, file)
+
+def save_tiff_metadata(path, metadata):
+    # Save tiff metadata in tiff_metadata_dict pickle file
+    tiff_metadata_dict = get_tiff_metadata_dict()
+    tiff_metadata_dict[path] = metadata
+    set_tiff_metadata_dict(tiff_metadata_dict)

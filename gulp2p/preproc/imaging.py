@@ -14,10 +14,14 @@ import os.path
 from pathlib import Path
 
 from gulp2p import preproc
+from gulp2p.preproc import utils, behavior, draw
 from gulp2p.preproc.tiff import Tiff
+from gulp2p.preproc.trial import Trial
+from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR
+from unityvr.analysis import align2img
 
 
-def plotMeanPlane(stack, col = 0, ncols = 4):
+def plot_mean_plane(stack, col = 0, ncols = 4):
     """
     Plot the mean of each plane in a stack in a plot with ncol columns
 
@@ -46,7 +50,7 @@ def plotMeanPlane(stack, col = 0, ncols = 4):
 
     return mean_fig
 
-def stackToMIP(stack, slices):
+def stack_to_mip(stack, slices):
     """
     Convert a stack to a series of maximum intensity projections (MIPs),
     where the slices to be consider in each projection are specified
@@ -70,7 +74,7 @@ def stackToMIP(stack, slices):
 
     return np.squeeze(div_stack_MIP)
 
-def getSlicesFromStack():
+def get_slices_from_stack():
     """
     Specify which slices to consider in the stack
 
@@ -89,7 +93,7 @@ def getSlicesFromStack():
 
     return slices
 
-def tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, stack, sigma):
+def tif_motion_correct(numRefImg, locRefImg, upsampleFactor, stack, sigma):
     """ Motion correct a tiff stack by using phase cross correlation
     
     Arguments:
@@ -137,7 +141,7 @@ def tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, stack, sigma):
 
     return [shift, stackMC]
 
-def divStackMIP(stack, col = 0):
+def div_stack_mip(stack, col = 0):
     """
     Slice a stack into volumes and get the MIPs of those volumes
 
@@ -151,17 +155,17 @@ def divStackMIP(stack, col = 0):
         div_stack_MIP = the divided, MIPed stack
     """
     # Plot the mean slices
-    fig = plotMeanPlane(stack, col)
+    fig = plot_mean_plane(stack, col)
 
     # Specify the volume slices
-    slices = getSlicesFromStack()
+    slices = get_slices_from_stack()
 
     # Calculate the MIPs for the stack
-    div_stack_MIP = stackToMIP(stack, slices)
+    div_stack_MIP = stack_to_mip(stack, slices)
 
     return [slices, div_stack_MIP]
 
-def motionCorrectSlicedStack(div_stack_MIP, num_ref_img = 100, upsample_factor = 20, sigma = 2):
+def motion_correct_sliced_stack(div_stack_MIP, num_ref_img = 100, upsample_factor = 20, sigma = 2):
     """
     Motion correct each volume MIP in a sliced stack
 
@@ -178,7 +182,7 @@ def motionCorrectSlicedStack(div_stack_MIP, num_ref_img = 100, upsample_factor =
     corrected_stack_1 = np.ones(div_stack_MIP.shape[0:2] + div_stack_MIP.shape[3:]).astype('int16')
 
     for vol in range(div_stack_MIP.shape[1]):
-        [shift_dat_now, corrected_stack_1[:,vol,:,:]] = tifMotionCorrect(num_ref_img, loc_ref_img, upsample_factor,
+        [shift_dat_now, corrected_stack_1[:,vol,:,:]] = tif_motion_correct(num_ref_img, loc_ref_img, upsample_factor,
                                                                         div_stack_MIP[:,vol,0,:,:],sigma)
         shift_dat.append(shift_dat_now)
 
@@ -199,7 +203,7 @@ def motionCorrectSlicedStack(div_stack_MIP, num_ref_img = 100, upsample_factor =
         corrected_stacks = corrected_stack_1
     return corrected_stacks
 
-def getROIs(stack, roiFN, oldROIs, oldType):
+def get_rois(stack, roiFN, oldROIs, oldType):
     """ Use napari to get ROIs from a stack, using a given ROI function
     """
 
@@ -217,7 +221,7 @@ def getROIs(stack, roiFN, oldROIs, oldType):
 
     return [napOut, allROIs, allMasks]
 
-def FfromROIsDiv(stack, all_masks):
+def f_from_rois_div(stack, all_masks):
     """ Calculate the raw fluorescence in each ROI in all ROIS on the given stack
     for a stack with multiple volumes
     """
@@ -237,7 +241,7 @@ def FfromROIsDiv(stack, all_masks):
 
     return rawF
 
-def FfromROIs(stack, allMasks, frameIdx=0):
+def f_from_rois(stack, allMasks, frameIdx=0):
     """Calculate the raw fluorescence in each ROI in all ROIS on the given stack
 
     Args:
@@ -261,7 +265,7 @@ def FfromROIs(stack, allMasks, frameIdx=0):
 
     return rawF
 
-def DFoF(rawF):
+def delta_flor(rawF):
     """ Calculate the DF/F given a raw fluorescence signal
     The baseline fluorescence is the mean of the lowest 10% of fluorescence signals
     """
@@ -276,7 +280,7 @@ def DFoF(rawF):
 
     return DF
 
-def DFoFfromfirstfms(rawF, fm_interval, baseline_sec=10):
+def delta_flor_from_first_fms(rawF, fm_interval, baseline_sec=10):
     """Calculate the DF/F given a raw fluorescence signal
     The baseline fluorescence is the mean of first 10 seconds of florescence
 
@@ -362,22 +366,24 @@ def get_bbox(rois, image_shape, scale_factor=1.5):
     view_box = incr_bbox(bounding_box, image_shape, scale_factor)
     return view_box
 
-def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
+def preprocess(path, tiff=None, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
     """Draw rois over brain regions in napari.
     Returns dictionary with florescence data.
 
     Args:
-        file (Path): Path of tiff to preprocess. 
+        path (Path): Path of tiff to preprocess.
+        tiff (Tiff): Tiff object of tiff. If not given, created from path. Defaults to None.
         old_rois (list): list of old rois from previous preprocessing. Defaults to None.
         numRefImg (int, optional): the number of images to average for the reference image. Defaults to 50.
         upsampleFactor (int, optional): how much to upsample the image in order to shift the image by less than one pixel. Defaults to 20.
         sigma (int, optional): the sigma to use in Gaussian filtering. Defaults to 2.
 
     Returns:
-        dict: preprocessed image data.
+        Trial: Trial object containing tiff and synced dataframe 
     """
-    # Load the tif
-    tiff = Tiff(file)
+    # Load the tiff
+    if tiff is None:
+        tiff = Tiff(path)
     stack = tiff.stack
     size_c = tiff.metadata['SizeC']
 
@@ -385,22 +391,22 @@ def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
     preproc.utils.save_tiff_metadata(tiff)
 
     # Plot the mean of each plane
-    fig_mean_planes = plotMeanPlane(stack,col=0) # col=1 to plot the second channel if it exists
-    
+    fig_mean_planes = plot_mean_plane(stack,col=0) # col=1 to plot the second channel if it exists
+
     # Specify the planes to use for the Maximum Intensity Projection (MIP)
-    slices = getSlicesFromStack()
-    
+    slices = get_slices_from_stack()
+
     # Calculate the MIP
-    stack_MIP = stackToMIP(stack,slices)
+    stack_MIP = stack_to_mip(stack,slices)
 
     # Motion correct the MIP
     locRefImg = round(stack_MIP.shape[0]/12)# the initial position in the stack to use for the reference. (~1/12 through the video)
     # [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
-    
+
     if size_c == 1:
-        [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP), sigma)
+        [shift, stack_MC] = tif_motion_correct(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP), sigma)
     else:
-        [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
+        [shift, stack_MC] = tif_motion_correct(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
 
 
 
@@ -410,38 +416,45 @@ def preprocess(file, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
     axs[0].axis('off')
     axs[1].imshow(stack_MC.mean(axis=0))
     axs[1].axis('off')
-    
+
     # Get the ROIS - For EB wedges, there are a number of other possible ROI functions for different shapes
     if old_rois is not None:
-        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), preproc.rois.PolyROIs, old_rois, 'polygon')
+        [rois, allROIs, allMasks] = get_rois(stack_MC.mean(axis=0), preproc.draw.PolyROIs, old_rois, 'polygon')
     else:
-        [rois, allROIs, allMasks] = getROIs(stack_MC.mean(axis=0), preproc.rois.PolyROIs, [],'')
-    
+        [rois, allROIs, allMasks] = get_rois(stack_MC.mean(axis=0), preproc.draw.PolyROIs, [],'')
+
     # Get the raw fluorescence
     rawF_G = np.zeros((stack_MC.shape[0],len(allMasks)))
     for fm_num, frame in enumerate(stack_MC):
         for r in range(0,len(allMasks)):
             rawF_G[fm_num,r] = np.multiply(frame, allMasks[r].T).sum()
-    
+
     # Get the DF/F
-    DF_G = DFoF(rawF_G)
-    
-    # Put all of the data into a dictionary
-    exptDat = {'path':Path(file),
-               'name':Path(file).stem,
-               'stack_mip': np.squeeze(stack_MC.mean(axis=0)),
-               'rois': rois,
-               'rawf':rawF_G,
-               'deltaf': DF_G,
-               'metadata': tiff.metadata,
-               'syncdf': None,
-              }
+    DF_G = delta_flor(rawF_G)
+
+
+    # Load behavioral data
+    bhv_paths = utils.get_bhv_paths(tiff, BHV_DATA_RAW_DIR)
+    # Load bhv object and concatenate if there are multiple
+    uvr = behavior.load_bhv_data(bhv_paths)
+
+    # Syncronize behavioral and imaging data
+    fpv = None
+    [imgInd, volFramePos] = align2img.findImgFrameTimes(uvr, fpv=fpv)
+    synced_df = align2img.combineImagingAndPosDf(DF_G, uvr.posDf, volFramePos)
+
     # TODO: make MIP, rawF, and DF multichannel if image is multichannel.
+
+    trial = Trial(path = path,
+                  tiff_metadata = tiff.metadata,
+                  mip_stack = tiff.get_mip_stack(),
+                  synced_df = synced_df,
+                  rois = rois)
 
     # Pickle and save the data
     #TODO: Add overwrite protection
     #TODO: Save to standard location (i.e. pickle folder like in glupuff)
-    outfile = open(file[0:-4] + '_DF.p', 'wb')
-    pickle.dump(exptDat, outfile)
-    outfile.close()
-    return exptDat
+
+    utils.save_trial(trial)
+
+    return trial

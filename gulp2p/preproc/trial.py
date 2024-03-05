@@ -1,62 +1,34 @@
-# ProcTrial.py
+# trial.py
 
 from pathlib import Path
 import pickle
 import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon, Rectangle
+from matplotlib.patches import Polygon
 from matplotlib.colors import CenteredNorm
 import numpy as np
 import pandas as pd
 import pingouin
-from functools import cached_property
 
-from unityvr.preproc import logproc as lp
-from unityvr.analysis import posAnalysis, align2img
 from gulp2p import preproc
-from gulp2p.preproc import ImagingPreProc as iPP
-from gulp2p.preproc import ROIs as ROIs
-from gulp2p.config import PROC_DAT_FOLDER
+from gulp2p.preproc import utils, imaging
+from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR
 
-class ProcTrial():
-    def __init__(self, path):
-        self.path = Path(path) # path (Path): path to tiff file of fly trials
-        self.name = self.path.stem
-        self.data = self.load_data()
+class Trial():
+    def __init__(self, path, tiff_metadata, mip_stack, synced_df, rois):
+        assert path is not None
+        self.path = Path(path) # path (Path): path to tiff file of fly trial
+        self.name = path.stem
+        self.tiff_metadata = tiff_metadata
+        self.mip_stack = mip_stack
+        self.rois = rois
+        self.synced_df = synced_df
 
-    # Loading / util functions
 
-    def load_data(self):
-        # Get preprocessed path from tiff path
-        pickle_path = preproc.utils.getPicklePath(self.path, PROC_DAT_FOLDER)
 
-        # Load data from path
-        self.exptDat = preproc.utils.loadProcData(pickle_path)
-        self.expDf = self.exptDat['expDf']
-        return 
-    
-    def load_data(self, proc_if_missing=False, prev_rois=None, proc_dat_folder=None) -> None:
-        if proc_dat_folder is None:
-            proc_dat_folder = PROC_DAT_FOLDER
 
-        pickle_nm = utils.getPicklePath(self.path, proc_dat_folder)
-
-        if not os.path.isfile(pickle_nm):
-            if proc_if_missing:
-                trial_data = gPP.process_trial(self.path, proc_dat_folder, prev_rois=prev_rois)
-                utils.saveTrials({self.path: trial_data}, proc_dat_folder)
-            else:
-                error_text = ("Trial has not been processed, so no processed data file exists.\n"
-                              + "set proc_if_missing to True to process trial if it doesn't exist\n")
-                raise RuntimeError(error_text)
-
-        self.data = utils.loadProcData(pickle_nm)
-
-        # Set peak_roi
-        if self.data.get('needle_roi') is not None:
-            self.peak_roi = self.data['needle_roi']
 
     def get_num_rois(self):
-        return len(self.exptDat['allROIs'])
+        return len(self.exptDat['allrois'])
 
     def shift_elements(self, arr, num, fill_value=np.nan):
         arr = np.roll(arr,num)
@@ -182,11 +154,11 @@ class ProcTrial():
     # Plotting Functions
 
     def plot_roi(self, trial_dat, panel, title="Protocerebral Bridge\n glomeruli (ROI's)", full_img=False):
-        # ['trialName', 'fpv', 'meanMIP_G', 'ROIOutlines', 'allROIs', 'rawF_G', 'DF_G']
+        # ['trialName', 'fpv', 'meanMIP_G', 'ROIOutlines', 'allrois', 'rawF_G', 'DF_G']
         # Get pixel dimensions
         trial_nm = trial_dat.get('trial_nm', trial_dat.get('trialName'))
         # pixel_dims = trial_dat.get('pixel_dims' ,iPP.getPixelDims(trial_nm))
-        rois = trial_dat.get('rois', trial_dat.get('allROIs'))
+        rois = trial_dat.get('rois', trial_dat.get('allrois'))
         mean_stack = trial_dat.get('stack_mean', trial_dat.get('meanMIP_G'))
 
         view_box = iPP.get_bbox(rois, image_shape=mean_stack.shape, scale_factor=1.5)
@@ -286,6 +258,3 @@ class ProcTrial():
                 ax.plot([p(point) for point in np.linspace(0, 360,360)], color= color)
         
         # return ax
-
-    
-

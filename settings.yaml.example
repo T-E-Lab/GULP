@@ -4,10 +4,18 @@
 # Fields have a colon at the end of the name with the value to the right of it
 # ex. "color: blue"
 
-# -- Processed data file output folder (pickle storage) --
-# to store in NAS use: Z:\GULP\Data\pickle\preproc
+# -- Data locations --
+
+# Root folder for pickle files (Processed data storage)
+# to store in NAS use: Z:\GULP\Data\pickle
 # to store in project use: ..\results\pickle
-proc_dat_folder: Z:\GULP\Data\pickle\preproc
+main_pickle_dir: Z:\GULP\Data\pickle
+
+# Point to the folder where unityvr output files are stored
+bhv_data_dir: Z:\Live Fly Imaging data\unity
+
+# Point to the folder where fictrac output files are stored
+fictrac_dir: Z:\Live Fly Imaging data\fictrac
 
 # -- Napari Settings (ROI Drawing) --
 
