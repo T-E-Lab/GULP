@@ -14,10 +14,10 @@ import os.path
 from pathlib import Path
 
 from gulp2p import preproc
-from gulp2p.preproc import utils, behavior, draw
+from gulp2p.preproc import utils, behavior, draw, tiff as tf
 from gulp2p.preproc.tiff import Tiff
 from gulp2p.preproc.trial import Trial
-from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR
+from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR, CONFIG_DICT
 from unityvr.analysis import align2img
 
 
@@ -209,11 +209,14 @@ def get_rois(stack, roiFN, oldROIs, oldType):
 
     # Load the mean image in napari
     viewer = napari.Viewer()
-    viewer.add_image(stack)
+    viewer.add_image(stack,
+                     colormap=CONFIG_DICT['napari_colormap'],
+                     gamma=CONFIG_DICT['napari_gamma'])
     if len(oldROIs) > 0:
-        viewer.add_shapes(oldROIs, shape_type=oldType, name = 'Shapes')
+        viewer.add_shapes(oldROIs, shape_type=oldType, name='Shapes',
+                          opacity=CONFIG_DICT['napari_shape_opacity'])
     else:
-        viewer.add_shapes(name = 'Shapes')
+        viewer.add_shapes(name='Shapes', opacity=CONFIG_DICT['napari_shape_opacity'])
     napari.run()
 
     # Use the ROIs that were drawn in napari to get image masks
@@ -366,7 +369,7 @@ def get_bbox(rois, image_shape, scale_factor=1.5):
     view_box = incr_bbox(bounding_box, image_shape, scale_factor)
     return view_box
 
-def preprocess(path, tiff=None, old_rois=None, numRefImg=50, upsampleFactor=20, sigma=2):
+def preprocess(path, tiff=None, old_rois=None, num_ref_img=50, upsample_factor=20, sigma=2, save=True):
     """Draw rois over brain regions in napari.
     Returns dictionary with florescence data.
 
@@ -374,8 +377,8 @@ def preprocess(path, tiff=None, old_rois=None, numRefImg=50, upsampleFactor=20, 
         path (Path): Path of tiff to preprocess.
         tiff (Tiff): Tiff object of tiff. If not given, created from path. Defaults to None.
         old_rois (list): list of old rois from previous preprocessing. Defaults to None.
-        numRefImg (int, optional): the number of images to average for the reference image. Defaults to 50.
-        upsampleFactor (int, optional): how much to upsample the image in order to shift the image by less than one pixel. Defaults to 20.
+        num_ref_img (int, optional): the number of images to average for the reference image. Defaults to 50.
+        upsample_factor (int, optional): how much to upsample the image in order to shift the image by less than one pixel. Defaults to 20.
         sigma (int, optional): the sigma to use in Gaussian filtering. Defaults to 2.
 
     Returns:
@@ -388,7 +391,7 @@ def preprocess(path, tiff=None, old_rois=None, numRefImg=50, upsampleFactor=20, 
     size_c = tiff.metadata['SizeC']
 
     # Save tiff metadata in tiff_metadata_dict pickle file
-    preproc.utils.save_tiff_metadata(tiff)
+    tf.save_tiff_metadata(tiff.path, tiff.metadata)
 
     # Plot the mean of each plane
     fig_mean_planes = plot_mean_plane(stack,col=0) # col=1 to plot the second channel if it exists
@@ -404,9 +407,9 @@ def preprocess(path, tiff=None, old_rois=None, numRefImg=50, upsampleFactor=20, 
     # [shift, stack_MC] = tifMotionCorrect(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
 
     if size_c == 1:
-        [shift, stack_MC] = tif_motion_correct(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP), sigma)
+        [shift, stack_MC] = tif_motion_correct(num_ref_img, locRefImg, upsample_factor, np.squeeze(stack_MIP), sigma)
     else:
-        [shift, stack_MC] = tif_motion_correct(numRefImg, locRefImg, upsampleFactor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
+        [shift, stack_MC] = tif_motion_correct(num_ref_img, locRefImg, upsample_factor, np.squeeze(stack_MIP[:,0,:,:]), sigma)
 
 
 
@@ -439,7 +442,7 @@ def preprocess(path, tiff=None, old_rois=None, numRefImg=50, upsampleFactor=20, 
     uvr = behavior.load_bhv_data(bhv_paths)
 
     # Syncronize behavioral and imaging data
-    fpv = None
+    fpv = tiff.metadata.get('SizeZ')
     [imgInd, volFramePos] = align2img.findImgFrameTimes(uvr, fpv=fpv)
     synced_df = align2img.combineImagingAndPosDf(DF_G, uvr.posDf, volFramePos)
 
@@ -455,6 +458,7 @@ def preprocess(path, tiff=None, old_rois=None, numRefImg=50, upsampleFactor=20, 
     #TODO: Add overwrite protection
     #TODO: Save to standard location (i.e. pickle folder like in glupuff)
 
-    utils.save_trial(trial)
+    if save:
+        utils.save_trial(trial)
 
     return trial
