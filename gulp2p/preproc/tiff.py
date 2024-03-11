@@ -295,10 +295,16 @@ class Tiff:
         Returns:
             float: length of tiff in seconds
         """
-        length = (self.metadata['SizeZ']
-                  * self.metadata['SizeC']
-                  * self.metadata['SizeT']
-                  * self.metadata['frame_interval'])
+        # Scanimage captures channels simultaneously
+        if self.is_scanimage:
+            length = (self.metadata['SizeZ']
+                      * self.metadata['SizeT']
+                      * self.metadata['frame_interval'])
+        else:
+            length = (self.metadata['SizeZ']
+                      * self.metadata['SizeC']
+                      * self.metadata['SizeT']
+                      * self.metadata['frame_interval'])
         return length
 
     def get_dim_axis(self, dim):
