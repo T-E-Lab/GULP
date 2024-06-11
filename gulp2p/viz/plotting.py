@@ -1,11 +1,14 @@
 # Move these functions to a new package associated with plotting, analysis in the future.
 import numpy as np
 import pandas as pd
+import pingouin
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon
+from matplotlib.patches import Polygon, Rectangle
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 # import matplotlib.lines as mlines
-from skimage.measure import block_reduce 
+from skimage.measure import block_reduce
 
 # import unityvr.preproc.logproc as lp
 from unityvr.analysis import posAnalysis
@@ -110,6 +113,335 @@ def corrOverTime(x,y,time, pre_time, post_time):
 ###
 # Functions added during refactor
 ###
+
+## Analysis functions
+
+def get_roi_angles(num_rois):
+    """Given the number of rois in one PB arm return a list sequentially assigning each roi to an angle
+
+    Args:
+        num_rois (int): number of rois in one PB arm (or in full EB)
+
+    Returns:
+        NDArray: Returns a list where at index i it has the angle for ROI i. 
+    """
+    return np.linspace(0,(2*np.pi),num_rois, endpoint=False)
+
+def angle_roi_to_radians(roi_angle, low=0, high=8):
+    return roi_angle/(high-low) * 2*np.pi
+
+def angle_radians_to_roi(rad_angle, num_roi):
+    roi_angle = rad_angle/(2*np.pi) * num_roi
+    return roi_angle
+
+def get_mean_roi(roi_weights, precise=False):
+    num_rois = len(roi_weights)
+    angles = get_roi_angles(num_rois)
+    circ_mean_rad = pingouin.circ_mean(angles=angles, w=roi_weights)
+    if circ_mean_rad < 0:
+        circ_mean_rad += 2*np.pi
+    roi_angle = angle_radians_to_roi(circ_mean_rad, num_rois) - 0.5
+    if not precise:
+        roi_angle = round(roi_angle)
+    return roi_angle
+
+def get_mean_rois(deltaf_df, precise=False):
+    num_frames, num_rois = deltaf_df.shape
+    angles = np.repeat(np.expand_dims(get_roi_angles(num_rois), axis=0), num_frames, axis=0)
+    circ_mean_rad = pingouin.circ_mean(angles=angles, w=deltaf_df, axis=1)
+    # convert range -pi to pi into 0 to 2pi
+    mask = (circ_mean_rad<0)
+    circ_mean_rad[mask] += 2*np.pi
+
+    roi_angle = angle_radians_to_roi(circ_mean_rad, num_rois) - 0.5
+    if not precise:
+        roi_angle = np.round(roi_angle).astype(np.int32)
+        roi_angle = roi_angle % num_rois
+    return roi_angle
+
+def get_circ_r(roi_weights):
+    num_rois = len(roi_weights)
+    angles = get_roi_angles(num_rois)
+    return pingouin.circ_r(angles=angles, w=roi_weights)
+
+def get_circ_rs(deltaf_df):
+    num_frames, num_rois = deltaf_df.shape
+    angles = np.repeat(np.expand_dims(get_roi_angles(num_rois), axis=0), num_frames, axis=0)
+    return pingouin.circ_r(angles=angles, w=deltaf_df, axis=1)
+
+def filter_mean_rois(mean_rois, circ_rs, min_r=0.15):
+    # in place change
+    if np.issubdtype(mean_rois.dtype , np.integer):
+        empty_value = -1
+    else:
+        empty_value = np.nan
+    
+    mask = (circ_rs <  min_r)
+    mean_rois[mask] = empty_value
+    return mean_rois
+
+def align_bumps(deltaf_df, mean_rois=None, min_r = 0, offset=0, shift_peak_flor=False, use_max_as_peak=False):
+    aligned_bumps = deltaf_df.copy()
+
+    if mean_rois is None:
+        mean_rois = get_mean_rois(aligned_bumps, precise=False)
+
+    if min_r > 0:
+        circ_rs = get_circ_rs(aligned_bumps)
+        filter_mean_rois(mean_rois, circ_rs)
+
+    for frame, mean_roi in enumerate(mean_rois):
+
+        roll_amount = -1 * mean_roi + offset
+        aligned_bump = np.roll(aligned_bumps[frame, :], roll_amount)
+        if shift_peak_flor:
+            if use_max_as_peak:
+                peak_deltaf = np.max(aligned_bump)
+            else:
+                peak_deltaf = aligned_bump[offset]
+            aligned_bump += 1 - peak_deltaf
+        aligned_bumps[frame, :] = aligned_bump
+
+    return aligned_bumps
+
+def normalize_bumps(aligned_bumps):
+    normalized_bumps = np.empty(shape=aligned_bumps.shape)
+    for index, bump in enumerate(aligned_bumps):
+        min_val = np.min(aligned_bumps[index])
+        max_val = np.max(aligned_bumps[index])
+        normalized_bumps[index] = (bump - min_val)/(max_val - min_val)
+    return normalized_bumps
+
+def standard_cos_func(x, A, B, C, D):
+    y = A*np.cos(B*(x-C)) + D
+    return y
+
+def get_r2(cos_func, xdata, ydata, parameters):
+    # https://stackoverflow.com/questions/19189362/getting-the-r-squared-value-using-curve-fit
+    residuals = ydata - cos_func(xdata, *parameters)
+    ss_res = np.sum(residuals**2)
+    ss_tot = np.sum((ydata-np.mean(ydata))**2)
+    r_squared = 1 - (ss_res / ss_tot)
+    return r_squared
+
+def get_cos_fit(mean_bump, cos_func=standard_cos_func):
+    # Returns best fit parameters for cos_func and 
+    # https://education.molssi.org/python-data-analysis/03-data-fitting/index.html
+    from scipy.optimize import curve_fit
+
+    repeats = 4
+    # Repeat bump to connect ends of bump together for better cosine fit.
+    ydata = np.tile(mean_bump, repeats)
+    xdata = range(len(ydata))
+
+    initial_params = [1, 2*np.pi/8, 8/2, 0.5]
+    parameters, covariance = curve_fit(cos_func, xdata, ydata,
+                                       initial_params,
+                                       method='lm')
+    r_squared = get_r2(cos_func, xdata, ydata, parameters)
+    return parameters, covariance, r_squared
+
+
+## Plotting functions
+def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_hd=False):
+    # TODO: add dotted lines at border between trials
+    if mode == "full":
+       deltaf = expt.synced_df.iloc[:, :expt.num_rois]
+    if mode == "upper":
+       deltaf = expt.synced_df.iloc[:, expt.rois_per_arm:expt.num_rois]
+    if mode == "lower":
+       deltaf = expt.synced_df.iloc[:, 0:expt.rois_per_arm]
+    ax.imshow(deltaf.T,
+              aspect="auto", interpolation="none",
+              vmin=vmin, vmax=vmax)
+    
+    if with_int_hd:
+        mean_rois = get_mean_rois(deltaf, precise=True)
+        circ_rs = get_circ_rs(deltaf)
+        filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=0.3)
+        ax.plot(filtered_mean_rois, marker='o', linestyle="", ms=0.5, color="C1", alpha=0.5)
+    
+    for trial_start_frame in expt.trial_start_frames:
+        ax.axvline(trial_start_frame,
+                   linestyle="--",
+                   linewidth=1,
+                   color="gray",
+                   zorder=10)
+    ax.set_xlim([0, len(expt.synced_df)])
+    ax.invert_yaxis()
+
+def plot_external_head_direction(expt, ax):
+    ax.plot(expt.synced_df['angle'], marker='o', linestyle="", ms=1, color="C1")
+
+    for trial_start_frame in expt.trial_start_frames:
+        ax.axvline(trial_start_frame,
+                   linestyle="--",
+                   linewidth=1,
+                   color="gray",
+                   zorder=10)
+    ax.set_ylim(0, 360)
+    ax.set_xlim([0, len(expt.synced_df)])
+
+def plot_bump_profile(aligned_bumps, ax, with_std=True, with_fit=True, with_metric=True):
+    # TODO: get aligned bumps from expt
+    mean_bump = np.mean(aligned_bumps, axis=0)
+    std_bump = np.std(aligned_bumps, axis=0)
+    ax.plot(mean_bump, color='black', linewidth=2)
+    ax.axhline(0, color='black', linestyle="--", alpha=0.5)
+
+    if with_std:
+        ax.fill_between(range(len(mean_bump)),
+                        mean_bump + std_bump,
+                        mean_bump - std_bump,
+                        color="gray",
+                        alpha=0.5,
+                        zorder=1)
+
+    if with_fit:
+        cos_func = standard_cos_func
+        parameters, covariance, r_squared = get_cos_fit(mean_bump, cos_func=cos_func)
+        xdata = np.linspace(0, len(mean_bump)-1, 100)
+        ydata = cos_func(xdata, *parameters)
+        ax.plot(xdata, ydata)
+    
+    if with_metric:
+         metric = f"R^2 = {r_squared:.3f}"
+         ax.text(0.95, 0.95, metric, fontsize=7,
+                 transform=ax.transAxes, ha='right', va='top')
+
+    ax.set_xlabel("roi")
+    ax.set_ylabel("df/f")
+
+def plot_hd_offset_histogram(expt, ax, nbins=16):
+
+    upper_deltaf = expt.synced_df.iloc[:, expt.rois_per_arm:expt.num_rois]
+    lower_deltaf = expt.synced_df.iloc[:, 0:expt.rois_per_arm]
+
+    mean_rois = get_mean_rois(lower_deltaf, precise=True)
+    circ_rs = get_circ_rs(lower_deltaf)
+    filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=0.3)
+
+    int_head_direction = ((filtered_mean_rois * 360 / 8)) % 360
+    ext_head_direction = (expt.synced_df.angle) % 360
+
+    hd_offset =  (int_head_direction - ext_head_direction) % 360
+
+    ax.hist(hd_offset, bins=nbins)
+
+
+    circ_r = pingouin.circ_r(pingouin.convert_angles(hd_offset))
+    metric = f"circ R = {circ_r:.3f}"
+    ax.text(0.99, 0.95, metric, fontsize=9,
+            transform=ax.transAxes, ha='right', va='top')
+
+    bin_width = 360 / 8
+    ax.set_xlim([0, 360])
+
+    xticks = np.linspace(0, 360, 8, endpoint=True) + bin_width/2
+    xticklabels = [f"{tick:.1f}" if i%2==0 else None for i, tick in enumerate(xticks)]
+    ax.set_xticks([0,90,180,270,360], [0,None,180,None,360])
+
+    ax.set_xlabel("Offset Angle")
+    ax.set_ylabel("Counts")
+
+def plot_expt(expt):
+    # Plot experiment
+    mosaic = [["upper_pb_deltaf", "cbar", ".", "upper_bump_profile", "filtered_upper_bump_profile"],
+              ["lower_pb_deltaf", "cbar", ".", "lower_bump_profile", "filtered_lower_bump_profile"],
+              ["ext_head_direction", "head_direction_offset", "head_direction_offset", "mean_bump_profile", "filtered_mean_bump_profile"]]
+    fig, axd = plt.subplot_mosaic(mosaic=mosaic,
+                                  figsize=(12, 5),
+                                  width_ratios=[3,0.15,0.2,1,1],
+                                  layout="constrained")
+
+    # Plot Glutamate signal and external head direction
+    # Both upper and lower arms
+    vmin = np.min(expt.synced_df.iloc[:, :expt.num_rois].to_numpy())
+    vmax = np.max(expt.synced_df.iloc[:, :expt.num_rois].to_numpy())
+    plot_deltaf_heatmap(expt, axd["upper_pb_deltaf"], mode="upper", vmin=vmin, vmax=vmax, with_int_hd=True)
+    plot_deltaf_heatmap(expt, axd["lower_pb_deltaf"], mode="lower", vmin=vmin, vmax=vmax, with_int_hd=True)
+    plot_external_head_direction(expt, axd["ext_head_direction"])
+
+    # Create colorbar
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    fig.colorbar(ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax)),
+                 cax=axd["cbar"], orientation='vertical', label='df/f')
+    axd["cbar"].yaxis.set_label_position("left")
+
+    # Plot head direction offset
+    plot_hd_offset_histogram(expt, axd["head_direction_offset"])
+
+    # Plot mean profile with cosine fit
+    circ_r_min = 0.2
+    # Upper arm
+    upper_deltaf = np.array(expt.synced_df.iloc[:, expt.rois_per_arm:expt.rois_per_arm*2])
+    upper_bumps = align_bumps(upper_deltaf, offset=3)
+    circ_rs = get_circ_rs(upper_bumps)
+    # filtered_upper_bumps = upper_bumps[circ_rs > circ_r_min]
+    normalized_bumps = normalize_bumps(upper_bumps)
+    plot_bump_profile(upper_bumps, axd["upper_bump_profile"], with_std=True, with_fit=True)
+    plot_bump_profile(normalized_bumps, axd["filtered_upper_bump_profile"], with_std=True, with_fit=True)
+
+    # Lower arm
+    lower_deltaf = np.array(expt.synced_df.iloc[:, 0:expt.rois_per_arm])
+    lower_bumps = align_bumps(lower_deltaf, offset=3)
+    circ_rs = get_circ_rs(lower_bumps)
+    # filtered_lower_bumps = lower_bumps[circ_rs > circ_r_min]
+    normalized_bumps = normalize_bumps(lower_bumps)
+    plot_bump_profile(lower_bumps, axd["lower_bump_profile"], with_std=True, with_fit=True)
+    plot_bump_profile(normalized_bumps, axd["filtered_lower_bump_profile"], with_std=True, with_fit=True)
+
+    # Average of both arms
+    mean_deltaf = np.mean(np.array([upper_deltaf, lower_deltaf]), axis=0)
+    mean_bumps = align_bumps(mean_deltaf, offset=3)
+    circ_rs = get_circ_rs(mean_bumps)
+    # filtered_mean_bumps = mean_bumps[circ_rs > circ_r_min]
+    normalized_bumps = normalize_bumps(mean_bumps)
+    plot_bump_profile(mean_bumps, axd["mean_bump_profile"], with_std=True, with_fit=True)
+    plot_bump_profile(normalized_bumps, axd["filtered_mean_bump_profile"], with_std=True, with_fit=True)
+
+    # Plot aesthetics
+
+    # Share y axes for bump profiles
+    axd["filtered_upper_bump_profile"].sharey(axd["upper_bump_profile"])
+    axd["filtered_lower_bump_profile"].sharey(axd["lower_bump_profile"])
+    axd["filtered_mean_bump_profile"].sharey(axd["mean_bump_profile"])
+
+    # Remove duplicate y ticklabels and labels
+    for title in ["filtered_upper_bump_profile",
+                  "filtered_lower_bump_profile",
+                  "filtered_mean_bump_profile"]:
+        # https://stackoverflow.com/questions/4209467/matplotlib-share-x-axis-but-dont-show-x-axis-tick-labels-for-both-just-one
+        plt.setp(axd[title].get_yticklabels(), visible=False)
+        axd[title].set_ylabel("")
+
+    # Remove duplicate x ticklabels
+    for title in ["upper_pb_deltaf", "upper_bump_profile", "filtered_upper_bump_profile",
+                  "lower_pb_deltaf", "lower_bump_profile", "filtered_lower_bump_profile"]:
+        axd[title].set_xticklabels([])
+        axd[title].set_xlabel("")
+    
+    # Set labels
+    for title in ["upper_pb_deltaf", "lower_pb_deltaf"]:
+        axd[title].set_ylabel("rois")
+    axd["ext_head_direction"].set_ylabel("head direction\n(degrees)")
+    axd["ext_head_direction"].set_xlabel("frames")
+
+    # deltaf titles
+    for bump_region in ["upper", "lower"]:
+        axd[f"{bump_region}_pb_deltaf"].set_title(f"{bump_region} arm")
+
+    # Column titles
+    axd["upper_bump_profile"].set_title("bump profile")
+    # axd["filtered_upper_bump_profile"].set_title(f"filtered bump profile\nwith circular r > {circ_r_min}")
+    axd["filtered_upper_bump_profile"].set_title(f"bumps individually normalized")
+
+    # Row titles
+    for bump_region in ["upper", "lower", "mean"]:
+        axd[f"filtered_{bump_region}_bump_profile"].set_ylabel(f"{bump_region} bump")
+        axd[f"filtered_{bump_region}_bump_profile"].yaxis.set_label_position("right")
+    
+    return fig, axd
 
 
 ##
@@ -413,19 +745,77 @@ def plot_general_stim(uvr, fig=None, figsize=None):
 # Imaging Plotting
 ##
 
-def plot_roi(trial_dat, panel, title="Protocerebral Bridge\n glomeruli (ROI's)", full_img=False):
-    # Get pixel dimensions
-    trial_nm = trial_dat.get('name', trial_dat.get('trialName'))
-    # pixel_dims = trial_dat.get('pixel_dims' ,iPP.getPixelDims(trial_nm))
-    rois = trial_dat.get('rois', trial_dat.get('allROIs'))
-    mean_stack = trial_dat.get('stack_mip', trial_dat.get('meanMIP_G'))
+def incr_bbox(bounding_box, image_shape, scale_factor):
+    """Scale a bounding box keeping it centered at the same spot
 
-    view_box = preproc.imaging.get_bbox(rois, image_shape=mean_stack.shape, scale_factor=1.5)
-    panel.imshow(mean_stack)
+    Args:
+        bounding_box (ndarray): Bounding box of shape (2,2): [x or y, min or max]
+        scale_factor (float): Amount to scale each side of the bounding box by
+
+    Returns:
+        NDArray[float64]: scaled bounding box
+    """
+    view_box = np.empty(shape=(2, 2))
+    for dim in range(2):
+        for lim in range(2):
+            if lim == 0:  # min
+                sign = -1
+            if lim == 1:  # max
+                sign = 1
+            length = bounding_box[dim, 1] - bounding_box[dim, 0]
+            scale_amount = sign * (scale_factor - 1) / 2 * length
+            view_box[dim, lim] = bounding_box[dim, lim] + scale_amount
+        # Clip box if it extends beyond image bounds
+        if view_box[dim, 0] < 0:
+            view_box[dim, 0] = 0
+        if view_box[dim, 1] > image_shape[dim]:
+            view_box[dim, 1] = image_shape[dim]
+    return view_box
+
+def get_bbox(rois, image_shape, scale_factor=1.5):
+    """Given a list of rois, return a bounding box, a scale factor of 1 is a tight box
+
+    Args:
+        rois (list[ndarray]): List of rois, each roi is an ndarray of the points that make up the roi.
+        scale_factor (float, optional): Amount to scale each side of the bounding box by. Defaults to 1.5.
+
+    Returns:
+        NDArray[float64]: Bounding box of shape (2,2): [x or y, min or max]
+    """
+    XCOL = 0
+    YCOL = 1
+    # roi_bound axes: [roi, x or y, min or max]
+    roi_bounds = np.empty(shape=(len(rois), 2, 2))
+
+    # Get min and max for each roi x and y
+    for i, r in enumerate(rois):
+        roi_bounds[i][0][0], roi_bounds[i][1][0] = r.min(axis=0)[XCOL : YCOL + 1]
+        roi_bounds[i][0][1], roi_bounds[i][1][1] = r.max(axis=0)[XCOL : YCOL + 1]
+
+    # Get the coords for the bounding box, using upper left corner to lower right
+    # bounding_box axes: [x or y, min or max]
+    bounding_box = np.empty(shape=(2, 2))
+    bounding_box[:, 0] = roi_bounds[:, :, 0].min(axis=0)
+    bounding_box[:, 1] = roi_bounds[:, :, 1].max(axis=0)
+
+    # Create a larger bounding box to not cut off parts of the PB
+    view_box = incr_bbox(bounding_box, image_shape, scale_factor)
+    return view_box
+
+def plot_roi(trial, panel):
+    # Get pixel dimensions
+    pixel_width = trial.tiff_metadata['pixel_width']
+    pixel_width_unit = trial.tiff_metadata['width_unit']
+    pixel_height = trial.tiff_metadata['pixel_height']
+    pixel_height_unit = trial.tiff_metadata['height_unit']
+
+
+    view_box = get_bbox(trial.rois, trial.mip_frame.shape, scale_factor=1.5)
+    panel.imshow(trial.mip_frame)
     panel.axis('off')
 
     # Draw ROI's
-    for j, r in enumerate(rois):
+    for j, r in enumerate(trial.rois):
         X_IDX = 0
         Y_IDX = 1
         panel.add_patch(
@@ -444,9 +834,39 @@ def plot_roi(trial_dat, panel, title="Protocerebral Bridge\n glomeruli (ROI's)",
             dict(ha='center', va='center', fontsize=3.5, color='w'),
         )
 
-    if not full_img:
-        panel.set_xlim(view_box[1])
-        panel.set_ylim(np.flip(view_box[0]))
-    panel.set_title(title)
+    # Add scale bar
+    x0, x1 = view_box[1]
+    y0, y1 = view_box[0]
 
+    # Get reasonable scalebar length
+    scale_bar_length = round((x1-x0)*0.2, -1)
+    if pixel_width_unit == "um":
+        scale_bar_unit = r"$\mu m$"
+    else:
+        scale_bar_unit = pixel_width_unit
 
+    scale_bar_margin = (x1-x0)*0.1
+    scale_bar_x = x1 - scale_bar_margin
+    scale_bar_y = y1 - scale_bar_margin
+    scale_bar_width = scale_bar_length / float(pixel_width)
+    scale_bar_height = (y1 - y0) * 0.0005
+    scale_bar = Rectangle([scale_bar_x, scale_bar_y],
+                          -1 * scale_bar_width,
+                          -1 * scale_bar_height,
+                          color='white',
+                          fill=True)
+    panel.add_patch(scale_bar)
+
+    labelpad = (y1 - y0) * 0.001
+    scale_bar_text_x = scale_bar_x - scale_bar_width/2
+    scale_bar_text_y = scale_bar_y - scale_bar_height - labelpad
+    panel.text(scale_bar_text_x, scale_bar_text_y,
+               f"{scale_bar_length} {scale_bar_unit}",
+               color='white',
+               fontsize=5,
+               ha='center',
+               va='bottom')
+
+    panel.set_xlim(view_box[1])
+    panel.set_ylim(np.flip(view_box[0]))
+    panel.set_title("Protocerebral Bridge\n glomeruli (ROI's)")

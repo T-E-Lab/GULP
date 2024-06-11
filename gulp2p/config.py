@@ -2,6 +2,9 @@
 
 from pathlib import Path
 import strictyaml
+import logging
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_FILE = Path(Path(__file__).parent, "..", "settings.yaml").resolve()
 
@@ -18,7 +21,7 @@ def load_config(config_file=None):
 
     yaml_text = config_file.read_text()
     config_dict = strictyaml.load(yaml_text, schema).data
-    print("config loaded")
+    logger.info("config loaded")
     return config_dict
 
 CONFIG_DICT = load_config()

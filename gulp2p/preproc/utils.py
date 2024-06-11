@@ -7,6 +7,8 @@ import pickle
 import tifffile as tf
 from datetime import datetime, timedelta
 from pathlib import Path
+import numpy as np
+import pandas as pd
 import warnings
 import re
 import cv2
@@ -44,6 +46,15 @@ def select_file_path(prompt="Select File", initialdir=None):
         return None
     file_path = Path(file_path_str)
     return file_path
+
+def select_file_paths(prompt="Select File", initialdir=None):
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", 1)
+
+    file_path_strs = filedialog.askopenfilenames(title=prompt, initialdir=initialdir)
+    file_paths = list(map(Path, file_path_strs))
+    return file_paths
 
 def select_folder_path(prompt="Select Folder", initialdir=None):
     root = tk.Tk()
@@ -94,6 +105,24 @@ def get_timestamp_from_string(string):
     date_str = date_match.group()
     timestamp = datetime.strptime(date_str, date_fmt).timestamp()
     return timestamp
+
+def get_datetime_from_string(string):
+    date_pattern_dict = {'%Y-%m-%d_%H-%M-%S': r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}",
+                         '%Y%m%d_%H%M%S': r"\d{8}_\d{6}",
+                         '%Y-%m-%d': r"\d{4}-\d{2}-\d{2}",
+                         '%Y%m%d': r"\d{8}"}
+
+    for date_fmt, date_pattern in date_pattern_dict.items():
+        date_match = re.search(date_pattern, string)
+        if date_match is None:
+            continue
+        else:
+            break
+    if date_match is None:
+        return None
+    date_str = date_match.group()
+    date = datetime.strptime(date_str, date_fmt)
+    return date
 
 def format_date(year, month):
     """Formats year and month together into form YYYY_MM
@@ -218,7 +247,10 @@ def get_bhv_length(bhv_path):
         end_lines = tail(bhv_path, num_lines)
         for line in end_lines[::-1]:
             if "timeSecs" in line:
-                return float(line.split(':')[-1].strip(" ,\n"))
+                float_pattern = r"\d+\.\d+"
+                match = re.search(float_pattern, line)
+                float_str = match.group()
+                return float(float_str)
         # Searched whole file and length not found.
         # This works since tail will return all the lines in a file if you ask for more than is in the file.
         if num_lines > len(end_lines):
@@ -243,9 +275,9 @@ def get_creation_time(file_path):
 
     # Modified before created
     # This means creation date is innacurate and needs to be estimated
-    if file_path.suffix == ".tif":
-        return Tiff(file_path).metadata['data'].timestamp()
-    elif file_path.suffix == ".json":
+    # if file_path.suffix == ".tif":
+    #     return Tiff(file_path).metadata['data'].timestamp()
+    if file_path.suffix == ".json":
         return get_timestamp_from_string(file_path.name)
 
     file_stats = file_path.stat()
@@ -255,24 +287,28 @@ def get_creation_time(file_path):
         # Expected result
         return ctime
     else:
+        if file_path.suffix == ".tif":
+            length = Tiff(file_path).length
+            ctime = mtime - length
+            return ctime
         error_str = "Creation date is innacurate, and there is currently no method to estimate the time it took to record data for this file"
         raise RuntimeError(error_str)
 
-def get_overlap(range1, range2, relative=False):
-    """Get the overlap of 2 ranges.
+def get_overlap(interval1, interval2, relative=False):
+    """Get the overlap of 2 intervals.
     https://stackoverflow.com/questions/3269434/whats-the-most-efficient-way-to-test-if-two-ranges-overlap
 
     Args:
-        range1 (Tuple[float, float]): First range
-        range2 (Tuple[float, float]): Second range
-        relative (bool): If True the returned range is relative to the range1.
+        interval1 (Tuple[float, float]): First interval
+        interval2 (Tuple[float, float]): Second interval
+        relative (bool): If True the returned interval is relative to the interval1.
 
     Returns:
-        Tuple[float, float]: Overlap of the ranges.
+        Tuple[float, float]: Overlap of the intervals. Returns None if there is no overlap.
     """
-    start1, end1 = range1
-    start2, end2 = range2
-    # ranges must go from left to right
+    start1, end1 = interval1
+    start2, end2 = interval2
+    # intervals must go from left to right
     assert end1 - start1 >=0
     assert end2 - start2 >=0
 
@@ -300,20 +336,20 @@ def get_tiff_bhv_overlap(tiff, bhv_path):
         bhv_path (Path): Path to the bhv file.
 
     Returns:
-        Tuple[float, float]: Overlap range relative to tiff.
+        Tuple[float, float]: Overlap interval relative to tiff.
     """
     tiff_start_time = tiff.metadata['date'].timestamp()
     tiff_length = tiff.length
-    tiff_range = (tiff_start_time, tiff_start_time + tiff_length)
+    tiff_interval = (tiff_start_time, tiff_start_time + tiff_length)
 
     bhv_start_time = get_timestamp_from_string(bhv_path.name)
     bhv_length = get_bhv_length(bhv_path)
-    bhv_range = (bhv_start_time, bhv_start_time + bhv_length)
+    bhv_interval = (bhv_start_time, bhv_start_time + bhv_length)
 
-    # print(f"tiff_range: {tiff_range[0]-tiff_range[0]} <-> {tiff_range[1]-tiff_range[0]}")
-    # print(f"bhv_range: {bhv_range[0]-tiff_range[0]} <-> {bhv_range[1]-tiff_range[0]}")
+    # print(f"tiff_interval: {tiff_interval[0]-tiff_interval[0]} <-> {tiff_interval[1]-tiff_interval[0]}")
+    # print(f"bhv_interval: {bhv_interval[0]-tiff_interval[0]} <-> {bhv_interval[1]-tiff_interval[0]}")
 
-    return get_overlap(tiff_range, bhv_range, relative=True)
+    return get_overlap(tiff_interval, bhv_interval, relative=True)
 
 def get_tiff_vid_overlap(tiff, vid_path):
     """Get the overlap of the fictrac video and tiff file, relative to the tiff.
@@ -323,19 +359,134 @@ def get_tiff_vid_overlap(tiff, vid_path):
         vid_path (Path): Path to the fictrac video.
 
     Returns:
-        Tuple[float, float]: Overlap range relative to tiff.
+        Tuple[float, float]: Overlap interval relative to tiff.
     """
     tiff_start_time = tiff.metadata['date'].timestamp()
     tiff_length = tiff.length
-    tiff_range = (tiff_start_time, tiff_start_time + tiff_length)
+    tiff_interval = (tiff_start_time, tiff_start_time + tiff_length)
 
     vid_start_time = get_timestamp_from_string(vid_path.name)
     vid_length = get_vid_length(vid_path)
-    vid_range = (vid_start_time, vid_start_time + vid_length)
+    vid_interval = (vid_start_time, vid_start_time + vid_length)
 
-    return get_overlap(tiff_range, vid_range, relative=True)
+    return get_overlap(tiff_interval, vid_interval, relative=True)
 
-def get_bhv_paths(tiff, bhv_data_folder=None):
+def shift_intervals(intervals, shift):
+    shifted_intervals = []
+    for interval in intervals:
+        shifted = [point + shift for point in interval]
+        shifted_intervals.append(shifted)
+    return shifted_intervals
+
+def get_overlapping_intervals(main_intervals, secondary_intervals):
+    overlapping_intervals = []
+    for main_interval in main_intervals:
+        for secondary_interval in secondary_intervals:
+            interval_overlap = get_overlap(main_interval, secondary_interval)
+            if interval_overlap is None:
+                continue
+            overlapping_intervals.append(interval_overlap)
+    return overlapping_intervals
+
+def deduplicate_intervals(intervals):
+    sorted_intervals = sorted(intervals, key=lambda x: x[0])
+    i = 0
+    while (i < len(sorted_intervals)-1):
+        interval = sorted_intervals[i]
+        next_interval = sorted_intervals[i+1]
+        start_point = interval[0]
+        if next_interval[0] <= interval[1]:
+            end_point = max(interval[1], next_interval[1])
+            combined_interval = [start_point, end_point]
+            sorted_intervals[i:i+1+1] = [combined_interval]
+        else:
+            i += 1
+    return sorted_intervals
+
+def get_length_of_intervals(intervals):
+    length = 0
+    for interval in intervals:
+        length += interval[1] - interval[0]
+    return length
+
+def calculate_coverage(main_intervals, secondary_intervals, with_duplicates=False):
+    overlapping_intervals = get_overlapping_intervals(main_intervals, secondary_intervals)
+    if not with_duplicates:
+        overlapping_intervals = deduplicate_intervals(overlapping_intervals)
+    covered_length = get_length_of_intervals(overlapping_intervals)
+    total_length = get_length_of_intervals(main_intervals)
+    coverage = covered_length / total_length
+    return coverage
+
+def get_tiff_interval(tiff):
+    tiff_start_time = tiff.metadata['date'].timestamp()
+    tiff_length = tiff.length
+    tiff_interval = (tiff_start_time, tiff_start_time + tiff_length)
+    return tiff_interval
+
+def get_bhv_interval(bhv_path):
+    bhv_start_time = get_timestamp_from_string(bhv_path.name)
+    bhv_length = get_bhv_length(bhv_path)
+    if bhv_length is None:
+        bhv_length = 0
+    bhv_interval = (bhv_start_time, bhv_start_time + bhv_length)
+    return bhv_interval
+
+def get_all_bhvs_df():
+    df_dicts = []
+    for path in BHV_DATA_RAW_DIR.rglob("*"):
+        if path.suffix != ".json":
+            continue
+        if path.stem == "SessionParameters":
+            continue
+        if path.name in [row['path'].name for row in df_dicts]:
+            continue
+        bhv_timestamp = get_timestamp_from_string(path.name)
+        bhv_datetime = datetime.fromtimestamp(bhv_timestamp)
+        df_dicts.append({"path": path,
+                         "datetime": bhv_datetime,
+                         "timestamp": bhv_timestamp})
+    return pd.DataFrame(df_dicts)
+
+def get_all_tiff_paths(trial_date=None):
+    tiff_paths = []
+    # TODO: Update to read users tiff folders from yaml file.
+    tiff_folder = Path(r"Z:\2PImaging\Kerstin\MIMS")
+    for path in tiff_folder.rglob("*"):
+        if path.suffix != ".tif":
+            continue
+        if trial_date is not None:
+            tiff_datetime = get_datetime_from_string(path.name)
+            if tiff_datetime is None:
+                tiff_datetime = Tiff(path).metadata['date']
+            if tiff_datetime.date() != trial_date:
+                continue
+        tiff_paths.append(path)
+    return tiff_paths
+
+def get_coverage_df(tiffs, bhvs_df, bhv_window=12):
+    # Get bhv paths from within 12 hours
+    bhvs_df['interval'] = bhvs_df['path'].apply(get_bhv_interval)
+
+    bhv_window_seconds = bhv_window*60*60
+    bhv_mask = (np.abs(bhvs_df['timestamp'] - tiffs[0].metadata['date'].timestamp()) < bhv_window_seconds)
+    bhv_intervals = bhvs_df[bhv_mask]['interval']
+    tiff_intervals = [get_tiff_interval(tiff) for tiff in tiffs]
+
+    df_dicts = []
+    for tiff_interval in tiff_intervals:
+        for bhv_interval in bhv_intervals:
+            # Shift bhv file start to tiffs starting point
+            shift = tiff_interval[0] - bhv_interval[0]
+            shifted_bhv_intervals = shift_intervals(bhv_intervals, shift)
+            coverage = calculate_coverage(tiff_intervals, shifted_bhv_intervals)
+            df_dicts.append({"shift": shift,
+                            "coverage": coverage})
+
+    coverage_df = pd.DataFrame(df_dicts)
+    return coverage_df
+
+def get_bhv_paths_old(tiff, bhv_data_folder=None):
     """Find the corresponding behavioral data file(s) of a tiff file.
     There can be multiple files if unityVR stimuli were run multiple times during one tiff acquisition.
 
@@ -375,6 +526,45 @@ def get_bhv_paths(tiff, bhv_data_folder=None):
         if get_tiff_bhv_overlap(tiff, bhv_path) is not None:
             overlapping_bhv_paths.append(bhv_path)
     return overlapping_bhv_paths
+
+def get_bhv_path(tiff, offset, bhvs_df):
+    # given a tiff and its offset, search through the bhv_df for the nearest bhv file.
+    tiff_timestamp = tiff.metadata['date'].timestamp()
+    bhvs_df['abs_diff'] = bhvs_df['timestamp'].apply(lambda x: np.abs(x + offset - tiff_timestamp))
+    nearest_bhv_idx = bhvs_df['abs_diff'].argmin()
+    nearest_bhv_path = bhvs_df.loc[nearest_bhv_idx, 'path']
+    return nearest_bhv_path
+
+def get_bhv_paths(tiff_paths):
+    """Find the corresponding behavioral data file(s) of a tiff file.
+    There can be multiple files if unityVR stimuli were run multiple times during one tiff acquisition.
+
+    Args:
+        tiff (Tiff): tiff object. Function uses the tiff object since it caches length.
+        bhv_data_folder (Path): Path to behavioral data folder
+
+    Returns:
+        list[Path]: Paths of behavioral data files that overlapped.
+    """
+
+    # Use tiffs from that day to align bhv files
+    tiff_paths_to_align = tiff_paths
+    if len(tiff_paths) == 1:
+        tiff_date = get_datetime_from_string(tiff_paths[0].name).date()
+        tiff_paths_to_align = get_all_tiff_paths(trial_date=tiff_date)
+
+
+    tiffs = [Tiff(path) for path in tiff_paths_to_align]
+    bhvs_df = get_all_bhvs_df()
+    coverage_df = get_coverage_df(tiffs, bhvs_df)
+    offset = coverage_df.loc[coverage_df['coverage'].idxmax(), "shift"]
+
+    # Use best shift to find nearest bhv for each tiff.
+    bhv_paths = []
+    for tiff_path in tiff_paths:
+        bhv_path = get_bhv_path(Tiff(tiff_path), offset, bhvs_df)
+        bhv_paths.append(bhv_path)
+    return bhv_paths
 
 def get_vid_paths(tiff, fictrac_video_folder=None, vid_style="dbg"):
     """Find the corresponding fictrac video(s) of a tiff file.
@@ -417,6 +607,30 @@ def get_vid_paths(tiff, fictrac_video_folder=None, vid_style="dbg"):
     return overlapping_vid_paths
 
 def save_trial(trial):
-    pickle_path = get_trial_pickle_path(trial.path, trial.tiff_metadata.date)
+    """Save a trial to a pickle
+
+    Args:
+        trial (trial): trial object of processed tiff and behavioral data
+    """
+    pickle_path = get_trial_pickle_path(trial.path, trial.tiff_metadata['date'])
+    pickle_path.parent.mkdir(parents=True, exist_ok=True)
     with open(pickle_path, 'wb') as file:
         pickle.dump(trial, file)
+
+def load_trial(tiff):
+    """Get the processed trial of a tiff
+
+    Args:
+        tiff (Tiff): _description_
+
+    Returns:
+        Trial: trial object of processed tiff and behavioral data
+    """
+    # Get the trial pickle for the tiff
+    pickle_path = get_trial_pickle_path(tiff.path, tiff.metadata['date'])
+    if not pickle_path.exists():
+        # print("Trial not preprocessed")
+        return None
+    with open(pickle_path, 'rb') as file:
+        trial = pickle.load(file)
+    return trial

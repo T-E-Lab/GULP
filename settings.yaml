@@ -1,0 +1,36 @@
+# --- GULP Preferences file ---
+# IN ORDER TO USE, YOU MUST DUPLICATE FILE AND DELETE .example FROM FILENAME
+# Update any fields to preferred value
+# Fields have a colon at the end of the name with the value to the right of it
+# ex. "color: blue"
+
+# -- Data locations --
+
+# Root folder for pickle files (Processed data storage)
+# to store in NAS use: Z:\GULP\Data\pickle
+# to store in project use: ..\results\pickle
+main_pickle_dir: Z:\GULP\Data\pickle
+
+# Point to the folder where unityvr output files are stored
+bhv_data_dir: Z:\Live Fly Imaging data\unity
+
+# Point to the folder where fictrac output files are stored
+fictrac_dir: Z:\Live Fly Imaging data\fictrac
+
+# -- Napari Settings (ROI Drawing) --
+
+# Inversely proportional to brightness of image
+# 0 -> brightest, 1 -> normal, 2 -> darker
+napari_gamma: 0.4
+
+# Transparency of ROI shapes
+# 0 -> fully transparent, 1 -> fully opaque
+napari_shape_opacity: 0.2
+
+# Colormap to use when drawing stack
+# list of colormaps on https://matplotlib.org/stable/gallery/color/colormap_reference.html
+napari_colormap: viridis
+
+# If true, adds a layer to napari with the full image stack.
+# Allowing you to scroll through the expt if more detail is needed
+show_full_stack: True

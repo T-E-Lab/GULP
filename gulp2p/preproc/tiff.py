@@ -8,8 +8,11 @@ from functools import cached_property, cache
 import numpy as np
 import xarray as xr
 import pickle
+import logging
 
 from gulp2p.config import TIFF_METADATA_DICT_PATH
+
+logger = logging.getLogger(__name__)
 
 reshape_order = 'TZCYX'
 
@@ -38,7 +41,7 @@ class Tiff:
     Methods:
         get_scanimage_metadata(self) -> dict
         get_imagej_metadata(self) -> dict
-        load_tiff(self) -> np.ndarray
+        load_stack(self) -> np.ndarray
     """
     def __init__(self, path) -> None:
         """Constructor to create Tiff object.
@@ -116,16 +119,21 @@ class Tiff:
             if 'pixelBinFactor' in line:
                 metadata_dict['pixel_bin_factor'] = int(line_value)
 
-        # Get file size and date
-        # date can vary depending on how it is saved
-        metadata_dict['date'] = datetime.fromtimestamp(self.path.stat().st_ctime)
-        metadata_dict['file_size'] = os.path.getsize(self.path)
-
         # C, Z, and T Dimensions are grouped together in sequential order
         # stack needs to be reshaped using dimension info
         # since the stack is reshaped during access, ignore the original order
         metadata_dict['original_dim_order'] = 'TYX'
         metadata_dict['dimension_order'] = reshape_order
+
+        # Calculate length
+        metadata_dict['length'] = (metadata_dict['SizeZ']
+                                   * metadata_dict['SizeT']
+                                   * metadata_dict['frame_interval'])
+
+        # Get file size and date
+        # date can vary depending on how it is saved
+        metadata_dict['date'] = datetime.fromtimestamp(self.path.stat().st_ctime)
+        metadata_dict['file_size'] = os.path.getsize(self.path)
 
         # Get pixel resolution in micrometers
         with tf.TiffFile(self.path) as tiff:
@@ -148,6 +156,7 @@ class Tiff:
         with tf.TiffFile(self.path) as tiff:
             imagej_metadata = tiff.imagej_metadata
 
+        # TODO: Fix for when Info key is not in metadata (will need to pull dimension information from other keys like frames and images) 
         metadata_dict = {}
         for line in imagej_metadata['Info'].splitlines():
             line_value = line.split('=')[-1].strip()
@@ -189,6 +198,12 @@ class Tiff:
         metadata_dict['frame_interval'] = frame_interval
         metadata_dict['frame_rate'] = 1 / frame_interval
 
+        # Calculate length
+        metadata_dict['length'] = (metadata_dict['SizeZ']
+                                   * metadata_dict['SizeC']
+                                   * metadata_dict['SizeT']
+                                   * metadata_dict['frame_interval'])
+
         # Assume no flyback frames if not in scanimage format
         metadata_dict['discard_fb_frames'] = False
         metadata_dict['num_fb_frames'] = 0
@@ -221,6 +236,7 @@ class Tiff:
                 frame_rate (float): Frame rate of tiff.
                 frame_interval (float): Frame interval of tiff.
                 volume_rate (float): Volume rate of tiff. Only defined for scanimage tiffs.
+                length (float): Length of tiff in seconds.
                 zoom_factor (float): Optical zoom amount.
                 discard_fb_frames (bool): True if flyback frames need to be discarded. 
                 num_fb_frames (int): Number of flyback frames per volume.
@@ -249,8 +265,8 @@ class Tiff:
         save_tiff_metadata(self.path, metadata)
         return metadata
 
-    def load_tiff(self) -> np.ndarray:
-        """ Load in the tiff from self.path
+    def load_stack(self) -> np.ndarray:
+        """ Load in the tiff stack from self.path
         
         Returns:
             stack (np.ndarray): the imaging data in dimensions of 
@@ -260,6 +276,7 @@ class Tiff:
                 3: width
                 4: height
         """
+        logger.info("loading tiff stack")
 
         # Get the metadata
         metadata = self.metadata
@@ -275,18 +292,34 @@ class Tiff:
         stack = np.copy(self.scanimage_tiff_reader.data())
 
         # Reshape the volume to reflect the experimental parameters
-        stack = stack.reshape(size_t, size_z, size_c, size_y, size_x)
+        if (np.size(stack) != size_t * size_z * size_c * size_y * size_x):
+            logger.debug("Tiff stack doesn't match shape given in metadata. Adjusting metadata to actual shape")
+            num_remainder_frames = np.size(stack) % (size_z * size_c * size_y * size_x)
+            size_t = (np.size(stack) // (size_z * size_c * size_y * size_x))
+            self.metadata['SizeT'] = size_t
+            stack = stack.flatten()[:stack.size-num_remainder_frames].reshape(size_t, size_z, size_c, size_y, size_x)
+        else:
+            stack = stack.reshape(size_t, size_z, size_c, size_y, size_x)
         self.metadata['dimension_order'] = 'TZCYX'
 
         # Discard the flyback frames
         if discard_fb_frames:
             stack = stack[:,0:size_z-num_fb_frames,:,:,:]
+            self.metadata['SizeZ'] = size_z - num_fb_frames
+
+        logger.debug(f"Tiff shape: {stack.shape}")
+
+        # Correct for negative raw florescence
+        min_rawf = np.min(stack)
+        if min_rawf < 0:
+            logger.debug(f"correcting for negative raw florescence. min flor: {min_rawf}")
+            stack += abs(min_rawf)
 
         return stack
 
     @cached_property
     def stack(self) -> np.ndarray:
-        return self.load_tiff()
+        return self.load_stack()
 
     @ cached_property
     def length(self):
@@ -295,35 +328,36 @@ class Tiff:
         Returns:
             float: length of tiff in seconds
         """
-        # Scanimage captures channels simultaneously
-        if self.is_scanimage:
-            length = (self.metadata['SizeZ']
-                      * self.metadata['SizeT']
-                      * self.metadata['frame_interval'])
-        else:
-            length = (self.metadata['SizeZ']
-                      * self.metadata['SizeC']
-                      * self.metadata['SizeT']
-                      * self.metadata['frame_interval'])
-        return length
+        return self.metadata['length']
 
     def get_dim_axis(self, dim):
         index = self.metadata['dimension_order'].index(dim)
         return index
 
     @cache
-    def get_mip_stack(self, motion_correct=True):
+    def get_mip_stack(self, motion_correct=False):
         from gulp2p.preproc import imaging
         zaxis = self.get_dim_axis('Z')
         mip_stack = np.squeeze(np.max(self.stack, axis=zaxis))
         if motion_correct:
-            numRefImg=50
-            upsampleFactor=20
-            sigma=2
-            locRefImg = round(mip_stack.shape[0]/12)# the initial position in the stack to use for the reference. (~1/12 through the video)
-            [shift, mc_stack] = imaging.tif_motion_correct(numRefImg, locRefImg, upsampleFactor, mip_stack, sigma)
-            mip_stack = mc_stack
+            mip_stack, template = imaging.motion_correct_mip(mip_stack)
         return mip_stack
+
+    def get_creation_date(self):
+        # If the tiff was copied to another system its creation date will get reset but not other metadata.
+        # In these cases use modification time - estimated length as tiff creation time.
+        # Length of trial can be estimated with fm_interval and num of frames.
+        file_stats = self.path.stat()
+        ctime = file_stats.st_ctime
+        mtime = file_stats.st_mtime
+        
+        # Modified before created
+        # This means creation date is innacurate and needs to be estimated
+        if mtime < ctime:
+            ctime = mtime - self.length
+        return datetime.fromtimestamp(ctime)
+
+### Non-Class functions
 
 def get_tiff_metadata_dict():
     # Return a dictionary of all tiff metadata.

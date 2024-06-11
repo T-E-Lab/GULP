@@ -1,7 +1,9 @@
 # trial.py
 
 from pathlib import Path
+import logging
 import pickle
+import re
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from matplotlib.colors import CenteredNorm
@@ -9,26 +11,31 @@ import numpy as np
 import pandas as pd
 import pingouin
 
-from gulp2p import preproc
-from gulp2p.preproc import utils, imaging
+# from gulp2p import preproc
+# from gulp2p.preproc import utils, imaging
 from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR
 
+logger = logging.getLogger(__name__)
+
 class Trial():
-    def __init__(self, path, tiff_metadata, mip_stack, synced_df, rois):
+    def __init__(self, path, bhv_paths, tiff_metadata, mip_frame, slices, mc_obj, rois, masks, raw_flor, synced_df):
         assert path is not None
         self.path = Path(path) # path (Path): path to tiff file of fly trial
         self.name = path.stem
+        self.bhv_paths = bhv_paths
         self.tiff_metadata = tiff_metadata
-        self.mip_stack = mip_stack
+        self.mip_frame = mip_frame
+        self.slices = slices
+        self.mc_obj = mc_obj
         self.rois = rois
+        self.masks = masks
+        self.raw_flor = raw_flor
         self.synced_df = synced_df
 
 
 
-
-
     def get_num_rois(self):
-        return len(self.exptDat['allrois'])
+        return len(self.rois)
 
     def shift_elements(self, arr, num, fill_value=np.nan):
         arr = np.roll(arr,num)
@@ -258,3 +265,81 @@ class Trial():
                 ax.plot([p(point) for point in np.linspace(0, 360,360)], color= color)
         
         # return ax
+
+
+
+
+
+def parse_trial_name(trial_path, cell_types, genetic_tools):
+    # Return fields defined in trials name
+    # ex: 20240215_DR018xiGluSnFR_Fly02_00005.tif
+    # regex patterns built with https://regexr.com/
+
+    # Define regex patterns
+    patterns = {
+        "date": r"^(\d{8})_",
+        "line": r"([^_]+x[^_]+)",
+        "cell_type": r"([^_]+)x[^_]+",
+        "genetic_tool": r"[^_]+x([^_]+)",
+        "fly": r"fly(\d+)",
+        "trial": r"_(\d{5})\."
+    }
+
+    # Get info from trial name with regex
+    metadata = {}
+    for name, pattern in patterns.items():
+        match = re.search(pattern, trial_path.name,
+                          flags=re.IGNORECASE)
+        if match is None:
+            metadata[name] = None
+        else:
+            metadata[name] = match.group(1)
+
+    # Assign default values
+    # Convert from strings and set default values.
+    if metadata['date'] is None:
+        # Get date from path name if missing.
+        metadata['date'] = trial_path.parent.name
+    if metadata['cell_type'] is not None:
+        # Correct case and zero-padding of cell_type
+        cell_type = metadata['cell_type']
+        match = re.search(r"\d", cell_type)
+        if match is not None:
+            prefix = cell_type[:match.start()]
+            suffix = int(cell_type[match.start():])
+            cell_type = f"{prefix}{suffix:03d}"
+        try:
+            find_idx = list(map(str.lower, cell_types)).index(cell_type.lower())
+            metadata['cell_type'] = cell_types[find_idx]
+        except:
+            pass
+    if metadata['genetic_tool'] is not None:
+        # Correct case of genetic_tool
+        try:
+            find_idx = list(map(str.lower, genetic_tools)).index(metadata['genetic_tool'].lower())
+            metadata['genetic_tool'] = genetic_tools[find_idx]
+        except:
+            pass
+    if metadata['fly'] is not None:
+        # Convert fly number to int.
+        metadata['fly'] = int(metadata['fly'])
+    else:
+        # Set default value of 1.
+        metadata['fly'] = 1
+    if metadata['trial'] is not None:
+        # Convert trial number to int.
+        metadata['trial'] = int(metadata['trial'])
+
+    return metadata
+
+def create_trial_df(root_tiff_folder, cell_types, genetic_tools):
+    trial_df_dicts = []
+    for path in root_tiff_folder.rglob('*.tif'):
+        trial_metadata = parse_trial_name(path, cell_types, genetic_tools)
+
+        trial_df_dicts.append({
+            "path": path,
+            **trial_metadata
+        })
+    trial_df = pd.DataFrame(trial_df_dicts)
+    return trial_df
