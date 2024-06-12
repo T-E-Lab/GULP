@@ -2,25 +2,44 @@
 
 from pathlib import Path
 import strictyaml
+from strictyaml import Map, Optional, Str, Float, Bool, Seq
 import logging
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_FILE = Path(Path(__file__).parent, "..", "settings.yaml").resolve()
 
+def load_user_data_table(file_path):
+    # Given the path to the user_data_table
+    # Return the data in the table
+
+    schema = Seq(Map({"member": Str(),
+                      "data_dirs":Seq(Str()) | strictyaml.EmptyList()}))
+    yaml_text = Path(file_path).read_text()
+    user_data_table = strictyaml.load(yaml_text, schema).data
+
+    return user_data_table
+
+
 def load_config(config_file=None):
     if config_file is None:
         config_file = DEFAULT_CONFIG_FILE
-    schema = strictyaml.Map({"main_pickle_dir": strictyaml.Str(),
-                             "bhv_data_dir": strictyaml.Str(),
-                             "fictrac_dir": strictyaml.Str(),
-                             "napari_gamma": strictyaml.Float(),
-                             "napari_shape_opacity": strictyaml.Float(),
-                             "napari_colormap": strictyaml.Str(),
-                             "show_full_stack": strictyaml.Bool()})
+    schema = Map({"user_data_table_path": Str(),
+                  "main_pickle_dir": Str(),
+                  "bhv_data_dir": Str(),
+                  "fictrac_dir": Str(),
+                  "napari_gamma": Float(),
+                  "napari_shape_opacity": Float(),
+                  "napari_colormap": Str(),
+                  "show_full_stack": Bool()})
 
     yaml_text = config_file.read_text()
     config_dict = strictyaml.load(yaml_text, schema).data
+
+    # Add user data table info
+    user_data_table = load_user_data_table(config_dict['user_data_table_path'])
+    config_dict['user_data_table'] = user_data_table
+
     logger.info("config loaded")
     return config_dict
 

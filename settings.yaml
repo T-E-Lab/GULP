@@ -6,6 +6,9 @@
 
 # -- Data locations --
 
+# User data directory
+user_data_table_path: Z:\GULP\user_data_table.yaml
+
 # Root folder for pickle files (Processed data storage)
 # to store in NAS use: Z:\GULP\Data\pickle
 # to store in project use: ..\results\pickle
@@ -32,5 +35,5 @@ napari_shape_opacity: 0.2
 napari_colormap: viridis
 
 # If true, adds a layer to napari with the full image stack.
-# Allowing you to scroll through the expt if more detail is needed
+# Allowing you to scroll through the stack if more detail is needed
 show_full_stack: True
