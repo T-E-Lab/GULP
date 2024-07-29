@@ -38,19 +38,18 @@ def WedgeROIs(viewer, stackMean):
 def PolyROIs(viewer, stack):
     """ Make polygonal ROIs from a napari layer
     """
-
     # Get the ROIs from napari
     rois = viewer.layers['Shapes'].data
 
     # Initialize an array to hold the ROI masks
-    allMasks = []
+    masks = []
 
     # Make the polygonal ROIs from the points
-    for r in rois:
+    for roi in rois:
         mask = np.zeros(stack.shape)
-        allMasks.append(cv.fillConvexPoly(mask,np.array(r,dtype='int'),1).T)
+        masks.append(cv.fillPoly(mask,[np.array(np.flip(roi),dtype='int')],1).T)
 
-    return [rois, rois, allMasks]
+    return [rois, rois, masks]
 
 def EBROI(viewer, stack):
     """ Make a doughnut shaped ROI

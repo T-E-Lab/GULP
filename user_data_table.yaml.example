@@ -1,0 +1,29 @@
+# --- User data table ---
+# This file contains the root folder(s) of the live fly data for every lab member.
+
+# This information is used to: 
+# - Categorize data by its procurer when plotting
+# - Generate video summaries of the trials (not yet implemented)
+
+# -- Instructions --
+# Please add the paths to any data (tiff files) you would like to process with GULP.
+# Do not include paths to behavioral data files, they are automatically saved to the NAS, and matched to the appropriate tiff during processing.
+# ------------------
+
+# data_table:
+# Dan's data
+- member: Daniel Turner-Evans
+  data_dirs:
+
+# Kerstin's data
+- member: Kerstin Richter
+  data_dirs:
+    - Z:\2PImaging\Kerstin\MIMS
+
+# Cole's data
+- member: Cole R. K. Harder
+  data_dirs:
+
+# Michael's data
+- member: Michael Payne
+  data_dirs:

@@ -1,7 +1,8 @@
 from os import listdir
 from os.path import sep
 import pickle
-import gulp2p.utils as ut
+from gulp2p.preproc import utils as ut
+
 
 def loadData(rootDir):
     allDat = dict()
