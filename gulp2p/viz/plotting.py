@@ -1,4 +1,5 @@
 # Move these functions to a new package associated with plotting, analysis in the future.
+import logging
 import numpy as np
 import pandas as pd
 import pingouin
@@ -14,6 +15,8 @@ from skimage.measure import block_reduce
 from unityvr.analysis import posAnalysis
 import unityvr.viz.utils as uvrvisutils
 from gulp2p import preproc
+
+logger = logging.getLogger(__name__)
 
 def plot_colorbar(cax, F_plot, F_lims, cbarlabel):
     """Plot the colorbar for the given F_plot
@@ -171,14 +174,18 @@ def get_circ_rs(deltaf_df):
 
 def filter_mean_rois(mean_rois, circ_rs, min_r=0.15):
     # in place change
-    if np.issubdtype(mean_rois.dtype , np.integer):
+    if np.issubdtype(mean_rois.dtype, np.integer):
         empty_value = -1
     else:
         empty_value = np.nan
-    
+
+    filtered_mean_rois = np.copy(mean_rois)
+
     mask = (circ_rs <  min_r)
-    mean_rois[mask] = empty_value
-    return mean_rois
+    filtered_mean_rois[mask] = empty_value
+    if np.isnan(filtered_mean_rois).all():
+        logger.warning(f"No circular mean found with r >= {min_r}")
+    return filtered_mean_rois
 
 def align_bumps(deltaf_df, mean_rois=None, min_r = 0, offset=0, shift_peak_flor=False, use_max_as_peak=False):
     aligned_bumps = deltaf_df.copy()
@@ -259,6 +266,10 @@ def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_h
         mean_rois = get_mean_rois(deltaf, precise=True)
         circ_rs = get_circ_rs(deltaf)
         filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=0.3)
+        # Check if filter_mean_rois filtered out all points
+        if np.isnan(filtered_mean_rois).all():
+            min_r = np.quantile(circ_rs, 1-0.1)
+            filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=min_r)
         ax.plot(filtered_mean_rois, marker='o', linestyle="", ms=0.5, color="C1", alpha=0.5)
     
     for trial_start_frame in expt.trial_start_frames:
@@ -312,19 +323,33 @@ def plot_bump_profile(aligned_bumps, ax, with_std=True, with_fit=True, with_metr
     ax.set_xlabel("roi")
     ax.set_ylabel("df/f")
 
-def plot_hd_offset_histogram(expt, ax, nbins=16):
+def plot_hd_offset_histogram(expt, ax, nbins=16, bump_region="mean"):
 
-    upper_deltaf = expt.synced_df.iloc[:, expt.rois_per_arm:expt.num_rois]
-    lower_deltaf = expt.synced_df.iloc[:, 0:expt.rois_per_arm]
+    upper_deltaf = np.array(expt.synced_df.iloc[:, expt.rois_per_arm:expt.num_rois])
+    lower_deltaf = np.array(expt.synced_df.iloc[:, 0:expt.rois_per_arm])
 
-    mean_rois = get_mean_rois(lower_deltaf, precise=True)
-    circ_rs = get_circ_rs(lower_deltaf)
+    if bump_region == "upper":
+        deltaf = upper_deltaf
+    if bump_region == "lower":
+        deltaf = lower_deltaf
+    if bump_region == "mean":
+        deltaf = np.mean(np.array([upper_deltaf, lower_deltaf]), axis=0)
+
+    mean_rois = get_mean_rois(deltaf, precise=True)
+    circ_rs = get_circ_rs(deltaf)
+
+
     filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=0.3)
+    # Check if filter_mean_rois filtered out all points
+    if np.isnan(filtered_mean_rois).all():
+        min_r = np.quantile(circ_rs, 1-0.1)
+        print(f"refiltering circular means with r >= {min_r}")
+        filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=min_r)
 
     int_head_direction = ((filtered_mean_rois * 360 / 8)) % 360
     ext_head_direction = (expt.synced_df.angle) % 360
 
-    hd_offset =  (int_head_direction - ext_head_direction) % 360
+    hd_offset = (int_head_direction - ext_head_direction) % 360
 
     ax.hist(hd_offset, bins=nbins)
 
@@ -698,13 +723,21 @@ def plot_general_stim(uvr, fig=None, figsize=None):
     axd['angle_trace'].set_xlabel("Time (s)")
     axd['angle_trace'].set_ylabel("Head Angle (deg)")
 
+    velocity_margin_cutoff = 0.03
+
     # Plot rotational velocity histogram
-    axd['hist_rot'].hist(uvr.posDf.vR, bins=21)
+    mask = ((uvr.posDf['vR_filt'] > uvr.posDf['vR_filt'].quantile(velocity_margin_cutoff)) 
+            & (uvr.posDf['vR_filt'] < uvr.posDf['vR_filt'].quantile(1 - velocity_margin_cutoff)))
+    rot_vel_filt = uvr.posDf[mask]['vR_filt']
+    axd['hist_rot'].hist(rot_vel_filt, bins=21)
     axd['hist_rot'].set_xlabel("Rotational Velocity (°/s)")
     axd['hist_rot'].set_ylabel("Counts")
 
     # Plot forward velocity histogram
-    axd['hist_forw'].hist(uvr.posDf.vT, bins=21)
+    mask = ((uvr.posDf['vT_filt'] > uvr.posDf['vT_filt'].quantile(velocity_margin_cutoff)) 
+            & (uvr.posDf['vT_filt'] < uvr.posDf['vT_filt'].quantile(1 - velocity_margin_cutoff)))
+    forw_vel_filt = uvr.posDf[mask]['vT_filt']
+    axd['hist_forw'].hist(forw_vel_filt, bins=21)
     axd['hist_forw'].set_xlabel("Forward Velocity (cm/s)")
     axd['hist_forw'].set_yticks([])
 

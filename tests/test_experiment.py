@@ -21,5 +21,5 @@ def test_create_experiment():
         trials.append(utils.load_trial(tiff))
     # Create experiment object
     expt = Experiment(trials)
-    # Stitch trials together
-    expt.stitch_trials()
+    assert expt.synced_df is not None
+

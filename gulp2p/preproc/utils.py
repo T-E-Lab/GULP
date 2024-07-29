@@ -12,9 +12,12 @@ import pandas as pd
 import warnings
 import re
 import cv2
+import logging
 
 from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR, FICTRAC_DIR
 from gulp2p.preproc.tiff import Tiff
+
+logger = logging.getLogger(__name__)
 
 def load_file_names(single_file=False, title=None):
     """Prompt user to select one or multiple files
@@ -110,7 +113,8 @@ def get_datetime_from_string(string):
     date_pattern_dict = {'%Y-%m-%d_%H-%M-%S': r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}",
                          '%Y%m%d_%H%M%S': r"\d{8}_\d{6}",
                          '%Y-%m-%d': r"\d{4}-\d{2}-\d{2}",
-                         '%Y%m%d': r"\d{8}"}
+                         '%Y%m%d': r"\d{8}",
+                         '%m.%d.%y': r"\d{1,2}\.\d{1,2}\.\d{2}"}
 
     for date_fmt, date_pattern in date_pattern_dict.items():
         date_match = re.search(date_pattern, string)
@@ -167,7 +171,7 @@ def save_trials(expt_dat, trial_date, subfolder=None):
         with open(fullPath, 'wb') as outfile:
             pickle.dump(trial, outfile)
 
-def get_trial_pickle_path(path, trial_date):
+def get_trial_pickle_path(tiff_path, trial_date):
     """Create path for pickle file. 
     Under the folder given, the pickle file is stored in a year and month folder (year_month)
 
@@ -182,7 +186,7 @@ def get_trial_pickle_path(path, trial_date):
     subfolder = year_month
     dir_path = Path(TRIAL_PICKLE_DIR, subfolder)
     timestamp = trial_date.strftime("%Y%m%d-%H%M%S")
-    base_name = f"{timestamp}_{path.stem}.pickle"
+    base_name = f"{timestamp}_{tiff_path.stem}.pickle"
     full_path = Path(dir_path, base_name)
     return full_path
 
@@ -550,7 +554,10 @@ def get_bhv_paths(tiff_paths):
     # Use tiffs from that day to align bhv files
     tiff_paths_to_align = tiff_paths
     if len(tiff_paths) == 1:
-        tiff_date = get_datetime_from_string(tiff_paths[0].name).date()
+        try:
+            tiff_date = get_datetime_from_string(tiff_paths[0].name).date()
+        except:
+            tiff_date = get_datetime_from_string(tiff_paths[0].as_posix()).date()
         tiff_paths_to_align = get_all_tiff_paths(trial_date=tiff_date)
 
 
@@ -629,7 +636,7 @@ def load_trial(tiff):
     # Get the trial pickle for the tiff
     pickle_path = get_trial_pickle_path(tiff.path, tiff.metadata['date'])
     if not pickle_path.exists():
-        # print("Trial not preprocessed")
+        logger.info(f"trial not processed: {tiff.path}")
         return None
     with open(pickle_path, 'rb') as file:
         trial = pickle.load(file)

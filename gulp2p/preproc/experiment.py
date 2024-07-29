@@ -33,9 +33,10 @@ class Experiment():
         # TODO: stitch rawf from each trial together
         # TODO: Add Attribute to get upper and lower arm df/f
 
-    def get_expt_name(self):
-        expt_name = f"{row['date']}_{row['line']}_Fly{row['fly']}"
-        pass
+    def get_expt_name(self, cell_types, genetic_tools):
+        trial_info = tr.parse_trial_name(self.trials[0], cell_types, genetic_tools)
+        expt_name = f"{trial_info['date']}_{trial_info['line']}_Fly{trial_info['fly']}"
+        return expt_name
 
     def filter_trials(self, trials):
         # Remove trials that are missing data
@@ -111,7 +112,7 @@ def create_expt_df(trial_df, cell_types, genetic_tools):
         expt_name = f"{row['date']}_{row['line']}_Fly{row['fly']}"
         try:
             expt_dict[expt_name].append(row['path'])
-        except:    
+        except KeyError:
             expt_dict[expt_name] = [row['path']]
     expt_df = pd.DataFrame(expt_dict.items(), columns=['expt_name', 'trial_paths'])
     expt_df = add_expt_metadata(expt_df, cell_types, genetic_tools)
