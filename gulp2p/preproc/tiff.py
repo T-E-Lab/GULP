@@ -132,7 +132,14 @@ class Tiff:
 
         # Get file size and date
         # date can vary depending on how it is saved
-        metadata_dict['date'] = datetime.fromtimestamp(self.path.stat().st_ctime)
+        ctime = self.path.stat().st_ctime
+        mtime = self.path.stat().st_mtime
+        # Estimate creation time if modified time is earlier than creation time
+        if ctime >= mtime:
+            logger.debug("tiff modification time is earlier than creation time")
+            ctime = mtime - metadata_dict['length']
+        metadata_dict['date'] = datetime.fromtimestamp(ctime)
+
         metadata_dict['file_size'] = os.path.getsize(self.path)
 
         # Get pixel resolution in micrometers
