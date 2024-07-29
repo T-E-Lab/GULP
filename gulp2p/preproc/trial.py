@@ -301,8 +301,10 @@ def parse_trial_name(trial_path, cell_types, genetic_tools):
         # Get date from path name if missing.
         metadata['date'] = trial_path.parent.name
     if metadata['cell_type'] is not None:
-        # Correct case and zero-padding of cell_type
         cell_type = metadata['cell_type']
+        # Replace DRo with DR0
+        cell_type = cell_type.replace("DRo", "DR0")
+        # Correct case and zero-padding of cell_type
         match = re.search(r"\d", cell_type)
         if match is not None:
             prefix = cell_type[:match.start()]
