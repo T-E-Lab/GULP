@@ -8,3 +8,5 @@ pandas
 matplotlib
 pingouin
 PyQt5
+strictyaml
+shapely
