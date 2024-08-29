@@ -1,6 +1,6 @@
 # trial.py
 
-from pathlib import Path
+from pathlib import Path, PurePath
 import logging
 import pickle
 import re
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class Trial():
     def __init__(self, path, bhv_paths, tiff_metadata, mip_frame, slices, mc_obj, rois, masks, raw_flor, synced_df):
         assert path is not None
-        self.path = Path(path) # path (Path): path to tiff file of fly trial
+        self.path = PurePath(path) # path (Path): path to tiff file of fly trial
         self.name = path.stem
         self.bhv_paths = bhv_paths
         self.tiff_metadata = tiff_metadata
@@ -340,7 +340,7 @@ def create_trial_df(root_tiff_folder, cell_types, genetic_tools):
         trial_metadata = parse_trial_name(path, cell_types, genetic_tools)
 
         trial_df_dicts.append({
-            "path": path,
+            "path": PurePath(path),
             **trial_metadata
         })
     trial_df = pd.DataFrame(trial_df_dicts)

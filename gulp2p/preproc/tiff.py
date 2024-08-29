@@ -3,7 +3,7 @@ from ScanImageTiffReader import ScanImageTiffReader
 import tifffile as tf
 from datetime import datetime
 import os.path
-from pathlib import Path
+from pathlib import Path, PurePath
 from functools import cached_property, cache
 import numpy as np
 import xarray as xr
@@ -49,7 +49,7 @@ class Tiff:
         Args:
             path (os.PathLike): Path to tiff file.
         """
-        self.path = Path(path)
+        self.path = PurePath(path)
 
 
     @cached_property
@@ -132,8 +132,8 @@ class Tiff:
 
         # Get file size and date
         # date can vary depending on how it is saved
-        ctime = self.path.stat().st_ctime
-        mtime = self.path.stat().st_mtime
+        ctime = Path(self.path).stat().st_ctime
+        mtime = Path(self.path).stat().st_mtime
         # Estimate creation time if modified time is earlier than creation time
         if ctime >= mtime:
             logger.debug("tiff modification time is earlier than creation time")
@@ -354,7 +354,7 @@ class Tiff:
         # If the tiff was copied to another system its creation date will get reset but not other metadata.
         # In these cases use modification time - estimated length as tiff creation time.
         # Length of trial can be estimated with fm_interval and num of frames.
-        file_stats = self.path.stat()
+        file_stats = Path(self.path).stat()
         ctime = file_stats.st_ctime
         mtime = file_stats.st_mtime
         
@@ -376,7 +376,7 @@ def get_tiff_metadata_dict():
     # to decide where it is stored and how it is named.
 
     # Create pickle file if it does not exit
-    if not TIFF_METADATA_DICT_PATH.exists():
+    if not Path(TIFF_METADATA_DICT_PATH).exists():
         tiff_metadata_dict = {}
         with open(TIFF_METADATA_DICT_PATH, 'wb+') as file:
             pickle.dump(tiff_metadata_dict, file)

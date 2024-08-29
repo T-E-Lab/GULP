@@ -1,6 +1,6 @@
 # behavior.py
 
-from pathlib import Path
+from pathlib import Path, PurePath
 import pandas as pd
 import pickle
 import json
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_bhv_pickle_path(path):
-    return Path(BHV_DATA_PICKLE_DIR, path.with_suffix(".pickle").name)
+    return PurePath(BHV_DATA_PICKLE_DIR, path.with_suffix(".pickle").name)
 
 def heal_json_file(path):
     """Heal an incomplete behavioral json file.
@@ -24,10 +24,10 @@ def heal_json_file(path):
     This causes the json files to be unreadable due to missing closing brackets.
 
     Args:
-        path (Path): path to behavioral json file.
+        path (PurePath): path to behavioral json file.
     """
     # Check for empty files
-    if path.stat().st_size == 0:
+    if Path(path).stat().st_size == 0:
         warnings.warn(f"{path} is empty, unable to heal.\n")
         return
 
@@ -92,7 +92,7 @@ def get_bhv_data(path, from_pickle=True):
     bhv_pickle_path = get_bhv_pickle_path(path)
     if from_pickle:
         # Check if uvr pickle has been created
-        if bhv_pickle_path.exists():
+        if Path(bhv_pickle_path).exists():
             return pd.read_pickle(bhv_pickle_path)
         else:
             print("Could not find preprocessed behavior data, parsing it now.")
@@ -104,7 +104,7 @@ def get_bhv_data(path, from_pickle=True):
 
 def load_bhv_data(paths, from_pickle=True):
     # Given a list of paths to bhv data, return a uvr object with all the data.
-    if (isinstance(paths, Path)):
+    if (isinstance(paths, PurePath)):
         return get_bhv_data(paths, from_pickle)
     elif (len(paths) == 1):
         return get_bhv_data(paths[0], from_pickle)

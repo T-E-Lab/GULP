@@ -6,7 +6,7 @@ from os.path import sep
 import pickle
 import tifffile as tf
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePath
 import numpy as np
 import pandas as pd
 import warnings
@@ -47,7 +47,7 @@ def select_file_path(prompt="Select File", initialdir=None):
     if file_path_str == "":
         print("File selection canceled")
         return None
-    file_path = Path(file_path_str)
+    file_path = PurePath(file_path_str)
     return file_path
 
 def select_file_paths(prompt="Select File", initialdir=None):
@@ -56,7 +56,7 @@ def select_file_paths(prompt="Select File", initialdir=None):
     root.attributes("-topmost", 1)
 
     file_path_strs = filedialog.askopenfilenames(title=prompt, initialdir=initialdir)
-    file_paths = list(map(Path, file_path_strs))
+    file_paths = list(map(PurePath, file_path_strs))
     return file_paths
 
 def select_folder_path(prompt="Select Folder", initialdir=None):
@@ -68,7 +68,7 @@ def select_folder_path(prompt="Select Folder", initialdir=None):
     if dir_path_str == "":
         print("Folder selection canceled")
         return None
-    dir_path = Path(dir_path_str)
+    dir_path = PurePath(dir_path_str)
     return dir_path
 
 def load_trial_info(rootDirs):
@@ -184,10 +184,10 @@ def get_trial_pickle_path(tiff_path, trial_date):
     """
     year_month = format_date(trial_date.year, trial_date.month)
     subfolder = year_month
-    dir_path = Path(TRIAL_PICKLE_DIR, subfolder)
+    dir_path = PurePath(TRIAL_PICKLE_DIR, subfolder)
     timestamp = trial_date.strftime("%Y%m%d-%H%M%S")
     base_name = f"{timestamp}_{tiff_path.stem}.pickle"
-    full_path = Path(dir_path, base_name)
+    full_path = PurePath(dir_path, base_name)
     return full_path
 
 def save_dat(fileNm, expt, expt_dat):
@@ -511,7 +511,7 @@ def get_bhv_paths_old(tiff, bhv_data_folder=None):
 
     # Select only json files within 12 hours of tiff creation
     for bhv_path in bhv_data_folder.rglob('*'):
-        if not bhv_path.is_file():
+        if not Path(bhv_path).is_file():
             continue
         if bhv_path.suffix != '.json':
             continue
@@ -620,7 +620,7 @@ def save_trial(trial):
         trial (trial): trial object of processed tiff and behavioral data
     """
     pickle_path = get_trial_pickle_path(trial.path, trial.tiff_metadata['date'])
-    pickle_path.parent.mkdir(parents=True, exist_ok=True)
+    Path(pickle_path).parent.mkdir(parents=True, exist_ok=True)
     with open(pickle_path, 'wb') as file:
         pickle.dump(trial, file)
 
@@ -635,7 +635,7 @@ def load_trial(tiff):
     """
     # Get the trial pickle for the tiff
     pickle_path = get_trial_pickle_path(tiff.path, tiff.metadata['date'])
-    if not pickle_path.exists():
+    if not Path(pickle_path).exists():
         logger.info(f"trial not processed: {tiff.path}")
         return None
     with open(pickle_path, 'rb') as file:
