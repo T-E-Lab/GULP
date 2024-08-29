@@ -1,25 +1,29 @@
-[tool.poetry]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
 name = "gulp2p"
 version = "0.1.0"
 description = "For preprocessing data from two-photon imaging  of head-fixed flies walking in virtual reality"
-authors = ["DanTurner-Evans <65718402+DanTurner-Evans@users.noreply.github.com>"]
+authors = [
+    {name = "DanTurner-Evans", email = "65718402+DanTurner-Evans@users.noreply.github.com"},
+    {name = "AliShenasa", email = "38480296+AliShenasa@users.noreply.github.com"},
+    ]
 readme = "README.md"
-packages = [{include = "gulp2p"}]
 
-[tool.poetry.dependencies]
-python = "^3.9, <3.11"
-scanimage-tiff-reader = "^1.4.1.3"
-numpy = "^1.25.1"
-scikit-image = "^0.21.0"
-scipy = "^1.11.1"
-napari = "^0.4.18"
-opencv-python = "^4.8.0.74"
-pandas = "^2.0.3"
-matplotlib = "^3.7.2"
-pingouin = "^0.5.3"
-pyqt6 = "^6.6.1"
-
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+dependencies = [
+    "scanimage-tiff-reader",
+    "numpy",
+    "scikit-image ",
+    "scipy",
+    "napari",
+    "opencv-python",
+    "pandas",
+    "matplotlib",
+    "pingouin",
+    "pyqt6",
+    "shapely",
+    "strictyaml",
+    "pytest",
+    ]
