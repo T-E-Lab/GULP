@@ -9,9 +9,9 @@ Tools for defining regions of interests (ROIs), calculating changes in fluoresce
 ## Install
 1. Clone repo, navigate into folder
 1. Create conda environment:  
- `conda create -n gulp2p -c conda-forge -c anaconda caiman=1.10 python=3.10`
+1. `conda create -n gulp2p -c conda-forge -c anaconda caiman=1.10 python=3.10`
 1. Activate environment:  
- `conda activate gulp2p`
+   `conda activate gulp2p`
 1. Install gulp2p package:  
    `pip install -e .`
 

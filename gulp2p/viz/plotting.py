@@ -1,4 +1,4 @@
-# Move these functions to a new package associated with plotting, analysis in the future.
+# plotting.py
 import logging
 import numpy as np
 import pandas as pd
@@ -10,11 +10,13 @@ from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 # import matplotlib.lines as mlines
 from skimage.measure import block_reduce
+from scipy.signal import savgol_filter
 
 # import unityvr.preproc.logproc as lp
 from unityvr.analysis import posAnalysis
 import unityvr.viz.utils as uvrvisutils
 from gulp2p import preproc
+import gulp2p.analysis.head_direction as hd
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ def plot_florescence(
     # Plot colorbar
     if withcbar:
         plot_colorbar(cax, F_plot, F_lims, cbarlabel)
-        
+
 def removeJumps(dat, thresh):
     datNoJump = np.array(dat)
 
@@ -98,7 +100,7 @@ def removeJumps(dat, thresh):
             datNoJump[i+1] = None
 
     return datNoJump   
-     
+
 def corrOverTime(x,y,time, pre_time, post_time):
     dt = np.round(np.diff(time).mean(),2)
     pre_time_pts = int(np.round(pre_time/dt))
@@ -117,181 +119,93 @@ def corrOverTime(x,y,time, pre_time, post_time):
 # Functions added during refactor
 ###
 
-## Analysis functions
-
-def get_roi_angles(num_rois):
-    """Given the number of rois in one PB arm return a list sequentially assigning each roi to an angle
-
-    Args:
-        num_rois (int): number of rois in one PB arm (or in full EB)
-
-    Returns:
-        NDArray: Returns a list where at index i it has the angle for ROI i. 
-    """
-    return np.linspace(0,(2*np.pi),num_rois, endpoint=False)
-
-def angle_roi_to_radians(roi_angle, low=0, high=8):
-    return roi_angle/(high-low) * 2*np.pi
-
-def angle_radians_to_roi(rad_angle, num_roi):
-    roi_angle = rad_angle/(2*np.pi) * num_roi
-    return roi_angle
-
-def get_mean_roi(roi_weights, precise=False):
-    num_rois = len(roi_weights)
-    angles = get_roi_angles(num_rois)
-    circ_mean_rad = pingouin.circ_mean(angles=angles, w=roi_weights)
-    if circ_mean_rad < 0:
-        circ_mean_rad += 2*np.pi
-    roi_angle = angle_radians_to_roi(circ_mean_rad, num_rois) - 0.5
-    if not precise:
-        roi_angle = round(roi_angle)
-    return roi_angle
-
-def get_mean_rois(deltaf_df, precise=False):
-    num_frames, num_rois = deltaf_df.shape
-    angles = np.repeat(np.expand_dims(get_roi_angles(num_rois), axis=0), num_frames, axis=0)
-    circ_mean_rad = pingouin.circ_mean(angles=angles, w=deltaf_df, axis=1)
-    # convert range -pi to pi into 0 to 2pi
-    mask = (circ_mean_rad<0)
-    circ_mean_rad[mask] += 2*np.pi
-
-    roi_angle = angle_radians_to_roi(circ_mean_rad, num_rois) - 0.5
-    if not precise:
-        roi_angle = np.round(roi_angle).astype(np.int32)
-        roi_angle = roi_angle % num_rois
-    return roi_angle
-
-def get_circ_r(roi_weights):
-    num_rois = len(roi_weights)
-    angles = get_roi_angles(num_rois)
-    return pingouin.circ_r(angles=angles, w=roi_weights)
-
-def get_circ_rs(deltaf_df):
-    num_frames, num_rois = deltaf_df.shape
-    angles = np.repeat(np.expand_dims(get_roi_angles(num_rois), axis=0), num_frames, axis=0)
-    return pingouin.circ_r(angles=angles, w=deltaf_df, axis=1)
-
-def filter_mean_rois(mean_rois, circ_rs, min_r=0.15):
-    # in place change
-    if np.issubdtype(mean_rois.dtype, np.integer):
-        empty_value = -1
-    else:
-        empty_value = np.nan
-
-    filtered_mean_rois = np.copy(mean_rois)
-
-    mask = (circ_rs <  min_r)
-    filtered_mean_rois[mask] = empty_value
-    if np.isnan(filtered_mean_rois).all():
-        logger.warning(f"No circular mean found with r >= {min_r}")
-    return filtered_mean_rois
-
-def align_bumps(deltaf_df, mean_rois=None, min_r = 0, offset=0, shift_peak_flor=False, use_max_as_peak=False):
-    aligned_bumps = deltaf_df.copy()
-
-    if mean_rois is None:
-        mean_rois = get_mean_rois(aligned_bumps, precise=False)
-
-    if min_r > 0:
-        circ_rs = get_circ_rs(aligned_bumps)
-        filter_mean_rois(mean_rois, circ_rs)
-
-    for frame, mean_roi in enumerate(mean_rois):
-
-        roll_amount = -1 * mean_roi + offset
-        aligned_bump = np.roll(aligned_bumps[frame, :], roll_amount)
-        if shift_peak_flor:
-            if use_max_as_peak:
-                peak_deltaf = np.max(aligned_bump)
-            else:
-                peak_deltaf = aligned_bump[offset]
-            aligned_bump += 1 - peak_deltaf
-        aligned_bumps[frame, :] = aligned_bump
-
-    return aligned_bumps
-
-def normalize_bumps(aligned_bumps):
-    normalized_bumps = np.empty(shape=aligned_bumps.shape)
-    for index, bump in enumerate(aligned_bumps):
-        min_val = np.min(aligned_bumps[index])
-        max_val = np.max(aligned_bumps[index])
-        normalized_bumps[index] = (bump - min_val)/(max_val - min_val)
-    return normalized_bumps
-
-def standard_cos_func(x, A, B, C, D):
-    y = A*np.cos(B*(x-C)) + D
-    return y
-
-def get_r2(cos_func, xdata, ydata, parameters):
-    # https://stackoverflow.com/questions/19189362/getting-the-r-squared-value-using-curve-fit
-    residuals = ydata - cos_func(xdata, *parameters)
-    ss_res = np.sum(residuals**2)
-    ss_tot = np.sum((ydata-np.mean(ydata))**2)
-    r_squared = 1 - (ss_res / ss_tot)
-    return r_squared
-
-def get_cos_fit(mean_bump, cos_func=standard_cos_func):
-    # Returns best fit parameters for cos_func and 
-    # https://education.molssi.org/python-data-analysis/03-data-fitting/index.html
-    from scipy.optimize import curve_fit
-
-    repeats = 4
-    # Repeat bump to connect ends of bump together for better cosine fit.
-    ydata = np.tile(mean_bump, repeats)
-    xdata = range(len(ydata))
-
-    initial_params = [1, 2*np.pi/8, 8/2, 0.5]
-    parameters, covariance = curve_fit(cos_func, xdata, ydata,
-                                       initial_params,
-                                       method='lm')
-    r_squared = get_r2(cos_func, xdata, ydata, parameters)
-    return parameters, covariance, r_squared
-
-
 ## Plotting functions
-def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_hd=False):
-    # TODO: add dotted lines at border between trials
-    if mode == "full":
-       deltaf = expt.synced_df.iloc[:, :expt.num_rois]
-    if mode == "upper":
-       deltaf = expt.synced_df.iloc[:, expt.rois_per_arm:expt.num_rois]
-    if mode == "lower":
-       deltaf = expt.synced_df.iloc[:, 0:expt.rois_per_arm]
-    ax.imshow(deltaf.T,
-              aspect="auto", interpolation="none",
-              vmin=vmin, vmax=vmax)
-    
-    if with_int_hd:
-        mean_rois = get_mean_rois(deltaf, precise=True)
-        circ_rs = get_circ_rs(deltaf)
-        filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=0.3)
-        # Check if filter_mean_rois filtered out all points
-        if np.isnan(filtered_mean_rois).all():
-            min_r = np.quantile(circ_rs, 1-0.1)
-            filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=min_r)
-        ax.plot(filtered_mean_rois, marker='o', linestyle="", ms=0.5, color="C1", alpha=0.5)
-    
-    for trial_start_frame in expt.trial_start_frames:
-        ax.axvline(trial_start_frame,
-                   linestyle="--",
-                   linewidth=1,
-                   color="gray",
-                   zorder=10)
-    ax.set_xlim([0, len(expt.synced_df)])
-    ax.invert_yaxis()
+def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_hd=False, smooth=True):
+    # Calculate length of all trials
+    total_length = 0
+    for trial in expt.trials:
+        total_length += trial.length
+
+    # Plot trials
+    for index, trial in enumerate(expt.trials):
+
+        # Select deltaf
+        if mode == "full":
+            deltaf = trial.synced_df.iloc[:, :trial.num_rois]
+        if mode == "upper":
+            deltaf = trial.synced_df.iloc[:, 8:trial.num_rois]
+        if mode == "lower":
+            deltaf = trial.synced_df.iloc[:, 0:8]
+
+
+        # Set extent for trial period
+        left = trial.synced_df['posTime'].iloc[0] - 0.5
+        right = trial.synced_df['posTime'].iloc[0] + trial.length - 0.5
+        bottom = - 0.5
+        top = deltaf.shape[1] - 0.5
+        extent = (left, right, bottom, top)
+
+        # Savitzky-Golay filter
+        if smooth:
+            deltaf = savgol_filter(deltaf.T, window_length=11, polyorder=3).T
+
+        # Plot df/f of trial
+        ax.imshow(deltaf.T,
+                  aspect="auto", interpolation="none",
+                  vmin=vmin, vmax=vmax, extent=extent,
+                  origin = 'lower')
+
+        # Plot internal head direction
+        if with_int_hd:
+            internal_hd = hd.get_internal_head_direction(trial, mode='mean')
+
+            # Change range from [0, 8) to [-0.5, 7.5), since that is the visual range on plots.
+            mask = (internal_hd >= (expt.rois_per_arm - 0.5))
+            internal_hd[mask] -= expt.rois_per_arm
+
+            ax.plot(trial.synced_df['posTime'],
+                    internal_hd,
+                    marker='o', linestyle="", ms=0.5, color="C1", alpha=0.5)
+
+        # Plot trial dividing line
+        # if index != 0:
+        #     ax.axvline(trial.synced_df['posTime'].iloc[0],
+        #                linestyle="--",
+        #                linewidth=1,
+        #                color="gray",
+        #                zorder=10)
+
+    ax.set_xlim([0, expt.synced_df['posTime'].iloc[-1]])
 
 def plot_external_head_direction(expt, ax):
-    ax.plot(expt.synced_df['angle'], marker='o', linestyle="", ms=1, color="C1")
+    external_hd_rad = pingouin.convert_angles(expt.synced_df['angle'])
+    ax.plot(expt.synced_df['posTime'],
+            external_hd_rad,
+            marker='o', linestyle="", ms=1, color="C1")
 
-    for trial_start_frame in expt.trial_start_frames:
-        ax.axvline(trial_start_frame,
-                   linestyle="--",
-                   linewidth=1,
-                   color="gray",
-                   zorder=10)
-    ax.set_ylim(0, 360)
-    ax.set_xlim([0, len(expt.synced_df)])
+    for index, trial in enumerate(expt.trials):
+        # Plot trial dividing line
+        if index != 0:
+            # Begining of trial
+            ax.axvline(trial.synced_df['posTime'].iloc[0],
+                       linestyle="--",
+                       linewidth=1,
+                       color="gray",
+                       zorder=10)
+        if index != (len(expt.trials) - 1):
+            # End of trial
+            ax.axvline(trial.synced_df['posTime'].iloc[-1],
+                       linestyle="--",
+                       linewidth=1,
+                       color="gray",
+                       zorder=10)
+
+    ax.set_ylim([-np.pi, np.pi])
+    ax.set_xlim([0, expt.synced_df['posTime'].iloc[-1]])
+
+    yticks = np.linspace(-np.pi, np.pi, 5, endpoint=True)
+    yticklabels = [r'-$\pi$', r'-$\pi/2$', '$0$', r'$\pi/2$', r'$\pi$']
+    ax.set_yticks(yticks, yticklabels)
 
 def plot_bump_profile(aligned_bumps, ax, with_std=True, with_fit=True, with_metric=True):
     # TODO: get aligned bumps from expt
@@ -309,8 +223,8 @@ def plot_bump_profile(aligned_bumps, ax, with_std=True, with_fit=True, with_metr
                         zorder=1)
 
     if with_fit:
-        cos_func = standard_cos_func
-        parameters, covariance, r_squared = get_cos_fit(mean_bump, cos_func=cos_func)
+        cos_func = hd.standard_cos_func
+        parameters, covariance, r_squared = hd.get_cos_fit(mean_bump, cos_func=cos_func)
         xdata = np.linspace(0, len(mean_bump)-1, 100)
         ydata = cos_func(xdata, *parameters)
         ax.plot(xdata, ydata)
@@ -323,50 +237,41 @@ def plot_bump_profile(aligned_bumps, ax, with_std=True, with_fit=True, with_metr
     ax.set_xlabel("roi")
     ax.set_ylabel("df/f")
 
-def plot_hd_offset_histogram(expt, ax, nbins=16, bump_region="mean"):
+def plot_hd_offset_histogram(expt, ax, nbins=16, mode='best'):
+    if mode == 'best':
+        hd_offsets = {}
+        for index, region in enumerate(['upper', 'lower', 'mean']):
+            hd_offset = hd.get_hd_offset(expt, mode=region)
+            circ_var = hd.get_circ_var(hd_offset)
+            hd_offsets[region] = {'offset': hd_offset,
+                                  'circ_var': circ_var}
+        min_var_region = min(hd_offsets.keys(), key=lambda k: hd_offsets[k]['circ_var'])
+        hd_offset = hd_offsets[min_var_region]['offset']
+        circ_var = hd_offsets[min_var_region]['circ_var']
 
-    upper_deltaf = np.array(expt.synced_df.iloc[:, expt.rois_per_arm:expt.num_rois])
-    lower_deltaf = np.array(expt.synced_df.iloc[:, 0:expt.rois_per_arm])
-
-    if bump_region == "upper":
-        deltaf = upper_deltaf
-    if bump_region == "lower":
-        deltaf = lower_deltaf
-    if bump_region == "mean":
-        deltaf = np.mean(np.array([upper_deltaf, lower_deltaf]), axis=0)
-
-    mean_rois = get_mean_rois(deltaf, precise=True)
-    circ_rs = get_circ_rs(deltaf)
-
-
-    filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=0.3)
-    # Check if filter_mean_rois filtered out all points
-    if np.isnan(filtered_mean_rois).all():
-        min_r = np.quantile(circ_rs, 1-0.1)
-        print(f"refiltering circular means with r >= {min_r}")
-        filtered_mean_rois = filter_mean_rois(mean_rois, circ_rs, min_r=min_r)
-
-    int_head_direction = ((filtered_mean_rois * 360 / 8)) % 360
-    ext_head_direction = (expt.synced_df.angle) % 360
-
-    hd_offset = (int_head_direction - ext_head_direction) % 360
+    else:
+        hd_offset = hd.get_hd_offset(expt, mode=mode)
 
     ax.hist(hd_offset, bins=nbins)
 
-
-    circ_r = pingouin.circ_r(pingouin.convert_angles(hd_offset))
-    metric = f"circ R = {circ_r:.3f}"
-    ax.text(0.99, 0.95, metric, fontsize=9,
+    if mode != 'best':
+        circ_var = hd.get_circ_var(hd_offset)
+    metric = f"circ var = {circ_var:.3f}"
+    ax.text(0.99, 0.975, metric, fontsize=9,
             transform=ax.transAxes, ha='right', va='top')
 
-    bin_width = 360 / 8
-    ax.set_xlim([0, 360])
+    ax.set_xlim([-np.pi, np.pi])
+    ax.set_ylim([None, ax.get_ylim()[1]*1.1])
 
-    xticks = np.linspace(0, 360, 8, endpoint=True) + bin_width/2
-    xticklabels = [f"{tick:.1f}" if i%2==0 else None for i, tick in enumerate(xticks)]
-    ax.set_xticks([0,90,180,270,360], [0,None,180,None,360])
+    xticks = np.linspace(-np.pi, np.pi, 5, endpoint=True)
+    xticklabels = [r'-$\pi$', r'-$\pi/2$', '$0$', r'$\pi/2$', r'$\pi$']
+    ax.set_xticks(xticks, xticklabels)
 
-    ax.set_xlabel("Offset Angle")
+    if mode == 'best':
+        region = min_var_region
+    else:
+        region = mode
+    ax.set_xlabel(f"Offset Angle ({region} int. HD)")
     ax.set_ylabel("Counts")
 
 def plot_expt(expt):
@@ -400,28 +305,28 @@ def plot_expt(expt):
     circ_r_min = 0.2
     # Upper arm
     upper_deltaf = np.array(expt.synced_df.iloc[:, expt.rois_per_arm:expt.rois_per_arm*2])
-    upper_bumps = align_bumps(upper_deltaf, offset=3)
-    circ_rs = get_circ_rs(upper_bumps)
+    upper_bumps = hd.align_bumps(upper_deltaf, offset=3)
+    circ_rs = hd.get_circ_rs(upper_bumps)
     # filtered_upper_bumps = upper_bumps[circ_rs > circ_r_min]
-    normalized_bumps = normalize_bumps(upper_bumps)
+    normalized_bumps = hd.normalize_bumps(upper_bumps)
     plot_bump_profile(upper_bumps, axd["upper_bump_profile"], with_std=True, with_fit=True)
     plot_bump_profile(normalized_bumps, axd["filtered_upper_bump_profile"], with_std=True, with_fit=True)
 
     # Lower arm
     lower_deltaf = np.array(expt.synced_df.iloc[:, 0:expt.rois_per_arm])
-    lower_bumps = align_bumps(lower_deltaf, offset=3)
-    circ_rs = get_circ_rs(lower_bumps)
+    lower_bumps = hd.align_bumps(lower_deltaf, offset=3)
+    circ_rs = hd.get_circ_rs(lower_bumps)
     # filtered_lower_bumps = lower_bumps[circ_rs > circ_r_min]
-    normalized_bumps = normalize_bumps(lower_bumps)
+    normalized_bumps = hd.normalize_bumps(lower_bumps)
     plot_bump_profile(lower_bumps, axd["lower_bump_profile"], with_std=True, with_fit=True)
     plot_bump_profile(normalized_bumps, axd["filtered_lower_bump_profile"], with_std=True, with_fit=True)
 
     # Average of both arms
     mean_deltaf = np.mean(np.array([upper_deltaf, lower_deltaf]), axis=0)
-    mean_bumps = align_bumps(mean_deltaf, offset=3)
-    circ_rs = get_circ_rs(mean_bumps)
+    mean_bumps = hd.align_bumps(mean_deltaf, offset=3)
+    circ_rs = hd.get_circ_rs(mean_bumps)
     # filtered_mean_bumps = mean_bumps[circ_rs > circ_r_min]
-    normalized_bumps = normalize_bumps(mean_bumps)
+    normalized_bumps = hd.normalize_bumps(mean_bumps)
     plot_bump_profile(mean_bumps, axd["mean_bump_profile"], with_std=True, with_fit=True)
     plot_bump_profile(normalized_bumps, axd["filtered_mean_bump_profile"], with_std=True, with_fit=True)
 
@@ -445,12 +350,15 @@ def plot_expt(expt):
                   "lower_pb_deltaf", "lower_bump_profile", "filtered_lower_bump_profile"]:
         axd[title].set_xticklabels([])
         axd[title].set_xlabel("")
-    
+    xticks = np.arange(0, axd['ext_head_direction'].get_xlim()[1], 300)
+    xticklabels = [f"{tick/60:.0f}" for tick in xticks]
+    axd['ext_head_direction'].set_xticks(xticks, xticklabels)
+
     # Set labels
     for title in ["upper_pb_deltaf", "lower_pb_deltaf"]:
         axd[title].set_ylabel("rois")
     axd["ext_head_direction"].set_ylabel("head direction\n(degrees)")
-    axd["ext_head_direction"].set_xlabel("frames")
+    axd["ext_head_direction"].set_xlabel("Time (minutes)")
 
     # deltaf titles
     for bump_region in ["upper", "lower"]:
@@ -465,7 +373,7 @@ def plot_expt(expt):
     for bump_region in ["upper", "lower", "mean"]:
         axd[f"filtered_{bump_region}_bump_profile"].set_ylabel(f"{bump_region} bump")
         axd[f"filtered_{bump_region}_bump_profile"].yaxis.set_label_position("right")
-    
+
     return fig, axd
 
 
@@ -586,7 +494,7 @@ def plot_grating_stim(uvr, fig=None, figsize=None):
         axd = fig.subplot_mosaic(mosaic,
                                  gridspec_kw=gridspec_kw)
         return_fig = False
-    
+
     # Plot fly path
     plot_path(axd['path'], uvr)
 
@@ -600,12 +508,12 @@ def plot_grating_stim(uvr, fig=None, figsize=None):
     axd['hist_rot'].hist(uvr.posDf.vR, bins=21, range=(-3,3))
     axd['hist_rot'].set_xlabel("Rotational Velocity (°/s)")
     axd['hist_rot'].set_ylabel("Counts")
-    
+
     # Plot forward velocity histogram
     axd['hist_forw'].hist(uvr.posDf.vT, bins=21, range=(0,6))
     axd['hist_forw'].set_xlabel("Forward Velocity (cm/s)")
     axd['hist_forw'].set_yticks([])
-    
+
     # Share y axis
     ylim_forw = axd['hist_forw'].get_ylim()
     ylim_rot = axd['hist_rot'].get_ylim()
@@ -758,7 +666,7 @@ def plot_general_stim(uvr, fig=None, figsize=None):
 
     yticks = range(0, round(max(counts), -3), 1000)
     axd['hist_angle'].set_yticks(yticks)
-    
+
     # Share y axis
     ylim_forw = axd['hist_forw'].get_ylim()
     ylim_rot = axd['hist_rot'].get_ylim()

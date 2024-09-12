@@ -31,10 +31,22 @@ class Experiment():
         self.trial_start_frames = self.get_trial_start_frames()
 
         # TODO: stitch rawf from each trial together
-        # TODO: Add Attribute to get upper and lower arm df/f
+
+    @property
+    def deltaf(self):
+        return np.array(self.synced_df.iloc[:, 0:self.num_rois])
+
+    @property
+    def upper_deltaf(self):
+        return self.deltaf[:, self.rois_per_arm:self.num_rois]
+
+    @property
+    def lower_deltaf(self):
+        return self.deltaf[:, 0:self.rois_per_arm]
+
 
     def get_expt_name(self, cell_types, genetic_tools):
-        trial_info = tr.parse_trial_name(self.trials[0], cell_types, genetic_tools)
+        trial_info = tr.parse_trial_name(self.trials[0].path, cell_types, genetic_tools)
         expt_name = f"{trial_info['date']}_{trial_info['line']}_Fly{trial_info['fly']}"
         return expt_name
 
