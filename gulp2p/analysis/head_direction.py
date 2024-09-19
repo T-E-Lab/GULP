@@ -1,5 +1,6 @@
 # head_direction.py
 
+import warnings
 import numpy as np
 import pingouin
 
@@ -118,6 +119,9 @@ def get_circ_rs(timeseries):
     return pingouin.circ_r(angles=angles, w=timeseries, axis=1)
 
 def get_circ_var(angles):
+    if np.isnan(angles).all():
+        warnings.warn("angles array is all nan, cannot calculate circular variance.", category=RuntimeWarning)
+        return np.nan
     return 1 - pingouin.circ_r(angles)
 
 def filter_circ_means(circ_means, circ_rs, min_r=0.15):
@@ -175,7 +179,11 @@ def get_internal_head_direction(expt, mode='mean', min_r=0.3):
         peak_angles = np.mean(np.array([upper_peak_angles, lower_peak_angles]), axis=0)
 
     # Convert from radians into roi angles
-    int_head_direction = angle_radians_to_roi(peak_angles, expt.rois_per_arm)
+    # int_head_direction = angle_radians_to_roi(peak_angles, expt.rois_per_arm)
+
+    int_head_direction = peak_angles
+
+    logger.debug(f"Internal head direction: {np.count_nonzero(np.isnan(int_head_direction))} nans / {len(int_head_direction)} total elements")
 
     return int_head_direction
 
@@ -196,6 +204,9 @@ def get_hd_offset(expt, mode='mean'):
     ext_head_direction = pingouin.convert_angles(expt.synced_df.angle)
 
     hd_offset = (int_head_direction - ext_head_direction) % (2*np.pi)
+    # Return if hd_offset is nan, shifting the range fails when it is nan
+    if np.isnan(hd_offset).all():
+        return hd_offset
     # Shift from range [0, 2pi) to [-pi, pi)
     hd_offset = pingouin.convert_angles(hd_offset, low=0, high=2*np.pi)
     return hd_offset

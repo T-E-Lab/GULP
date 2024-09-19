@@ -33,9 +33,19 @@ class Trial():
         self.synced_df = synced_df
         self.rois_per_arm = rois_per_arm
 
-    @property
-    def length(self):
-        return self.tiff_metadata['length']
+    def get_metadata_length(self):
+        length = self.tiff_metadata['length']
+        return length
+
+    def get_synced_length(self):
+        length = self.synced_df['posTime'].iloc[-1] - self.synced_df['posTime'].iloc[0]
+        return length
+
+    def get_length(self, mode='synced'):
+        if mode == 'synced':
+            return self.get_synced_length()
+        if mode == 'metadata':
+            return self.get_metadata_length()
 
     @property
     def num_rois(self):

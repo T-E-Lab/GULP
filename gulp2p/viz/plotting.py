@@ -124,23 +124,23 @@ def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_h
     # Calculate length of all trials
     total_length = 0
     for trial in expt.trials:
-        total_length += trial.length
+        total_length += trial.get_length()
 
     # Plot trials
     for index, trial in enumerate(expt.trials):
 
         # Select deltaf
         if mode == "full":
-            deltaf = trial.synced_df.iloc[:, :trial.num_rois]
+            deltaf = trial.deltaf
         if mode == "upper":
-            deltaf = trial.synced_df.iloc[:, 8:trial.num_rois]
+            deltaf = trial.upper_deltaf
         if mode == "lower":
-            deltaf = trial.synced_df.iloc[:, 0:8]
+            deltaf = trial.lower_deltaf
 
 
         # Set extent for trial period
         left = trial.synced_df['posTime'].iloc[0] - 0.5
-        right = trial.synced_df['posTime'].iloc[0] + trial.length - 0.5
+        right = trial.synced_df['posTime'].iloc[0] + trial.get_length() - 0.5
         bottom = - 0.5
         top = deltaf.shape[1] - 0.5
         extent = (left, right, bottom, top)
@@ -158,6 +158,9 @@ def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_h
         # Plot internal head direction
         if with_int_hd:
             internal_hd = hd.get_internal_head_direction(trial, mode='mean')
+
+            # Convert from radians to roi angles
+            internal_hd = hd.angle_radians_to_roi(internal_hd, expt.rois_per_arm)
 
             # Change range from [0, 8) to [-0.5, 7.5), since that is the visual range on plots.
             mask = (internal_hd >= (expt.rois_per_arm - 0.5))
