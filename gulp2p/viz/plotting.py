@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon, Rectangle
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
+from matplotlib.ticker import MaxNLocator
 # import matplotlib.lines as mlines
 from skimage.measure import block_reduce
 from scipy.signal import savgol_filter
@@ -126,6 +127,9 @@ def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_h
     for trial in expt.trials:
         total_length += trial.get_length()
 
+    start_time = expt.trials[0].synced_df['posTime'].iloc[0]
+    expt_timepoints = expt.synced_df['posTime'] - start_time
+
     # Plot trials
     for index, trial in enumerate(expt.trials):
 
@@ -137,10 +141,11 @@ def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_h
         if mode == "lower":
             deltaf = trial.lower_deltaf
 
+        trial_timepoints = trial.synced_df['posTime'] - start_time
 
         # Set extent for trial period
-        left = trial.synced_df['posTime'].iloc[0] - 0.5
-        right = trial.synced_df['posTime'].iloc[0] + trial.get_length() - 0.5
+        left = trial_timepoints.iloc[0] - 0.5
+        right = trial_timepoints.iloc[0] + trial.get_length() - 0.5
         bottom = - 0.5
         top = deltaf.shape[1] - 0.5
         extent = (left, right, bottom, top)
@@ -157,7 +162,7 @@ def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_h
 
         # Plot internal head direction
         if with_int_hd:
-            internal_hd = hd.get_internal_head_direction(trial, mode='mean')
+            internal_hd = hd.get_internal_head_direction(trial, mode=mode)
 
             # Convert from radians to roi angles
             internal_hd = hd.angle_radians_to_roi(internal_hd, expt.rois_per_arm)
@@ -166,7 +171,7 @@ def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_h
             mask = (internal_hd >= (expt.rois_per_arm - 0.5))
             internal_hd[mask] -= expt.rois_per_arm
 
-            ax.plot(trial.synced_df['posTime'],
+            ax.plot(trial_timepoints,
                     internal_hd,
                     marker='o', linestyle="", ms=0.5, color="C1", alpha=0.5)
 
@@ -178,33 +183,48 @@ def plot_deltaf_heatmap(expt, ax, mode="upper", vmin=None, vmax=None, with_int_h
         #                color="gray",
         #                zorder=10)
 
-    ax.set_xlim([0, expt.synced_df['posTime'].iloc[-1]])
+    xticks = np.arange(0, ax.get_xlim()[1], 300)
+    xticklabels = [f"{tick/60:.0f}" for tick in xticks]
+    ax.set_xticks(xticks, xticklabels)
+
+    ax.xaxis.set_major_locator(MaxNLocator(15, steps=[6], integer=True, min_n_ticks=4))
+    ax.xaxis.set_major_formatter(lambda x, pos: f"{x/60:g}")
+
+    ax.set_xlim([0, expt_timepoints.iloc[-1]])
 
 def plot_external_head_direction(expt, ax):
     external_hd_rad = pingouin.convert_angles(expt.synced_df['angle'])
-    ax.plot(expt.synced_df['posTime'],
+
+    start_time = expt.trials[0].synced_df['posTime'].iloc[0]
+    expt_timepoints = expt.synced_df['posTime'] - start_time
+
+    ax.plot(expt_timepoints,
             external_hd_rad,
             marker='o', linestyle="", ms=1, color="C1")
 
+    # Plot trial dividing line
     for index, trial in enumerate(expt.trials):
-        # Plot trial dividing line
+        trial_timepoints = trial.synced_df['posTime'] - start_time
         if index != 0:
             # Begining of trial
-            ax.axvline(trial.synced_df['posTime'].iloc[0],
+            ax.axvline(trial_timepoints.iloc[0],
                        linestyle="--",
                        linewidth=1,
                        color="gray",
                        zorder=10)
         if index != (len(expt.trials) - 1):
             # End of trial
-            ax.axvline(trial.synced_df['posTime'].iloc[-1],
+            ax.axvline(trial_timepoints.iloc[-1],
                        linestyle="--",
                        linewidth=1,
                        color="gray",
                        zorder=10)
 
     ax.set_ylim([-np.pi, np.pi])
-    ax.set_xlim([0, expt.synced_df['posTime'].iloc[-1]])
+    ax.set_xlim([0, expt_timepoints.iloc[-1]])
+
+    ax.xaxis.set_major_locator(MaxNLocator(15, steps=[6], integer=True, min_n_ticks=4))
+    ax.xaxis.set_major_formatter(lambda x, pos: f"{x/60:g}")
 
     yticks = np.linspace(-np.pi, np.pi, 5, endpoint=True)
     yticklabels = [r'-$\pi$', r'-$\pi/2$', '$0$', r'$\pi/2$', r'$\pi$']
@@ -297,7 +317,7 @@ def plot_expt(expt):
 
     # Create colorbar
     norm = Normalize(vmin=vmin, vmax=vmax)
-    fig.colorbar(ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax)),
+    fig.colorbar(ScalarMappable(norm=norm),
                  cax=axd["cbar"], orientation='vertical', label='df/f')
     axd["cbar"].yaxis.set_label_position("left")
 
@@ -353,9 +373,9 @@ def plot_expt(expt):
                   "lower_pb_deltaf", "lower_bump_profile", "filtered_lower_bump_profile"]:
         axd[title].set_xticklabels([])
         axd[title].set_xlabel("")
-    xticks = np.arange(0, axd['ext_head_direction'].get_xlim()[1], 300)
-    xticklabels = [f"{tick/60:.0f}" for tick in xticks]
-    axd['ext_head_direction'].set_xticks(xticks, xticklabels)
+    # xticks = np.arange(0, axd['ext_head_direction'].get_xlim()[1], 300)
+    # xticklabels = [f"{tick/60:.0f}" for tick in xticks]
+    # axd['ext_head_direction'].set_xticks(xticks, xticklabels)
 
     # Set labels
     for title in ["upper_pb_deltaf", "lower_pb_deltaf"]:

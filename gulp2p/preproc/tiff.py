@@ -125,8 +125,19 @@ class Tiff:
         metadata_dict['original_dim_order'] = 'TYX'
         metadata_dict['dimension_order'] = reshape_order
 
+        # TODO: Verify dimension lengths are correct using len(tif.pages) aka total number of frames
+
+        with tf.TiffFile(self.path) as tiff:
+            total_num_frames = len(tiff.pages)
+
+        if total_num_frames != metadata_dict['SizeC'] * metadata_dict['SizeZ'] * metadata_dict['SizeT']:
+            # update SizeT to match number of frames
+            logger.debug("Resizing dimensions to match size of tiff")
+            metadata_dict['SizeT'] = int(total_num_frames / metadata_dict['SizeC'] / metadata_dict['SizeZ'])
+
         # Calculate length
-        metadata_dict['length'] = (metadata_dict['SizeZ']
+        metadata_dict['length'] = (metadata_dict['SizeC']
+                                   * metadata_dict['SizeZ']
                                    * metadata_dict['SizeT']
                                    * metadata_dict['frame_interval'])
 
@@ -309,9 +320,18 @@ class Tiff:
             stack = stack.reshape(size_t, size_z, size_c, size_y, size_x)
         self.metadata['dimension_order'] = 'TZCYX'
 
+        # Convert stack to xarray object
+        dims = tuple(dim for dim in self.metadata['dimension_order'])
+        stack = xr.DataArray(data=stack, dims=dims)
+
+        t_coords = np.arange(0, stack.sizes['T']) / self.metadata['volume_rate']
+        stack.assign_coords(T=t_coords)
+
+        stack.attrs["long_name"] = "Raw Florescence"
+
         # Discard the flyback frames
         if discard_fb_frames:
-            stack = stack[:,0:size_z-num_fb_frames,:,:,:]
+            stack = stack.sel(Z=slice(0, size_z-num_fb_frames))
             self.metadata['SizeZ'] = size_z - num_fb_frames
 
         logger.debug(f"Tiff shape: {stack.shape}")
