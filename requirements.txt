@@ -10,3 +10,4 @@ pingouin
 PyQt5
 strictyaml
 shapely
+xarray
