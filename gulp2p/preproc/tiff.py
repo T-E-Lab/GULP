@@ -99,6 +99,8 @@ class Tiff:
                 metadata_dict['SizeY'] = int(line_value)
             if 'pixelsPerLine' in line:
                 metadata_dict['SizeX'] = int(line_value)
+            if 'hStackManager.zs =' in line:
+                metadata_dict['z_coords'] = [float(num_str) for num_str in line_value.strip('[]').split(' ')]
 
             # Imaging parameters
             if 'scanFrameRate' in line:
@@ -271,6 +273,7 @@ class Tiff:
                 width_unit (str): units used to define width of pixels.
                 pixel_height (float): height of pixels in units from width_unit.
                 height_unit (str): units used to define height of pixels.
+                z_coords (List[float]): coordinates for each z position. Only defined for scanimage tiffs.
         """
         # Check if the metadata has already been parsed and saved.
         if not self.reload_cache:
@@ -327,25 +330,31 @@ class Tiff:
         # Convert stack to xarray object
         dims = tuple(dim for dim in self.metadata['dimension_order'])
         stack = xr.DataArray(data=stack, dims=dims)
-
-        t_coords = np.arange(0, stack.sizes['T']) / self.metadata['volume_rate']
-        z_coords = None
-        y_coords = np.arange(0, stack.sizes['Y']) * self.metadata['pixel_height']
-        x_coords = np.arange(0, stack.sizes['X']) * self.metadata['pixel_width']
         
-        stack = stack.assign_coords(T=t_coords, Y=y_coords, X=x_coords)
-        stack.Y.attrs["units"] = self.metadata['height_unit']
-        stack.X.attrs["units"] = self.metadata['width_unit']
-
-
-        stack.attrs["long_name"] = "Raw Florescence"
-
         # Discard the flyback frames
         if discard_fb_frames:
             stack = stack.sel(Z=slice(0, size_z-num_fb_frames))
             self.metadata['SizeZ'] = size_z - num_fb_frames
-
         logger.debug(f"Tiff shape: {stack.shape}")
+
+        # Define stack coordinates
+        t_coords = np.arange(0, stack.sizes['T']) / self.metadata['volume_rate']
+        logger.debug(f"z_coords: {self.metadata.get('z_coords')}")
+        if self.metadata.get('z_coords') is not None:
+            z_coords = self.metadata.get('z_coords')
+        else:
+            z_coords = None
+        logger.debug(f"z_coords: {z_coords}")
+        y_coords = np.arange(0, stack.sizes['Y']) * self.metadata['pixel_height']
+        x_coords = np.arange(0, stack.sizes['X']) * self.metadata['pixel_width']
+        
+        stack = stack.assign_coords(T=t_coords, Z=z_coords, Y=y_coords, X=x_coords)
+        if z_coords is not None:
+            stack.Z.attrs["units"] = 'um'
+        stack.Y.attrs["units"] = self.metadata['height_unit']
+        stack.X.attrs["units"] = self.metadata['width_unit']
+
+        stack.attrs["long_name"] = "Raw Florescence"
 
         # Correct for negative raw florescence
         min_rawf = np.min(stack)
