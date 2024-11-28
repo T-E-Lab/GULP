@@ -159,9 +159,10 @@ class Tiff:
         with tf.TiffFile(self.path) as tiff:
             resolution = tiff.pages.first.get_resolution(unit=tf.RESUNIT.MICROMETER.value)
 
-        metadata_dict['pixels_per_unit_width'] = resolution[0]
+        # Resolution is given in pixels per micrometer, so the inverse is the pixel width/height
+        metadata_dict['pixel_width'] = 1 / resolution[0]
         metadata_dict['width_unit'] = 'um'
-        metadata_dict['pixels_per_unit_height'] = resolution[1]
+        metadata_dict['pixel_height'] = 1 / resolution[1]
         metadata_dict['height_unit'] = 'um'
 
         return metadata_dict
@@ -206,11 +207,11 @@ class Tiff:
             if 'ZoomValue' in line:
                 metadata_dict['zoom_factor'] = float(line_value)
             if '[Reference Image Parameter] WidthConvertValue' in line:
-                metadata_dict['pixels_per_unit_width'] = float(line_value)
+                metadata_dict['pixel_width'] = float(line_value)
             if '[Reference Image Parameter] WidthUnit' in line:
                 metadata_dict['width_unit'] = line_value
             if '[Reference Image Parameter] HeightConvertValue' in line:
-                metadata_dict['pixels_per_unit_height'] = float(line_value)
+                metadata_dict['pixel_height'] = float(line_value)
             if '[Reference Image Parameter] HeightUnit' in line:
                 metadata_dict['height_unit'] = line_value
         
@@ -266,9 +267,9 @@ class Tiff:
                 date (datetime): Time of acquisition.
                 file_size (int): Size of tiff in bytes.
                 dimension_order (str): Dimension order.
-                pixels_per_unit_width (float): width of pixels in units from width_unit.
+                pixel_width (float): width of pixels in units from width_unit.
                 width_unit (str): units used to define width of pixels.
-                pixels_per_unit_height (float): height of pixels in units from width_unit.
+                pixel_height (float): height of pixels in units from width_unit.
                 height_unit (str): units used to define height of pixels.
         """
         # Check if the metadata has already been parsed and saved.
@@ -329,9 +330,9 @@ class Tiff:
 
         t_coords = np.arange(0, stack.sizes['T']) / self.metadata['volume_rate']
         z_coords = None
-        y_coords = np.arange(0, stack.sizes['Y']) / self.metadata['pixels_per_unit_height']
-        x_coords = np.arange(0, stack.sizes['X']) / self.metadata['pixels_per_unit_width']
-
+        y_coords = np.arange(0, stack.sizes['Y']) * self.metadata['pixel_height']
+        x_coords = np.arange(0, stack.sizes['X']) * self.metadata['pixel_width']
+        
         stack = stack.assign_coords(T=t_coords, Y=y_coords, X=x_coords)
         stack.Y.attrs["units"] = self.metadata['height_unit']
         stack.X.attrs["units"] = self.metadata['width_unit']
