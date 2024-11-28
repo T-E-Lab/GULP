@@ -43,13 +43,14 @@ class Tiff:
         get_imagej_metadata(self) -> dict
         load_stack(self) -> np.ndarray
     """
-    def __init__(self, path) -> None:
+    def __init__(self, path, reload_cache=False) -> None:
         """Constructor to create Tiff object.
 
         Args:
             path (os.PathLike): Path to tiff file.
         """
         self.path = PurePath(path)
+        self.reload_cache = reload_cache
 
 
     @cached_property
@@ -76,6 +77,7 @@ class Tiff:
         Returns:
             dict: Dictionary of metadata.
         """
+        logger.info("Parsing scanimage metadata")
         # Step through the metadata, extracting relevant parameters
         metadata_dict = {}
         for line in self.scanimage_metadata.split('\n'):
@@ -157,9 +159,9 @@ class Tiff:
         with tf.TiffFile(self.path) as tiff:
             resolution = tiff.pages.first.get_resolution(unit=tf.RESUNIT.MICROMETER.value)
 
-        metadata_dict['pixel_width'] = resolution[0]
+        metadata_dict['pixels_per_unit_width'] = resolution[0]
         metadata_dict['width_unit'] = 'um'
-        metadata_dict['pixel_height'] = resolution[1]
+        metadata_dict['pixels_per_unit_height'] = resolution[1]
         metadata_dict['height_unit'] = 'um'
 
         return metadata_dict
@@ -204,11 +206,11 @@ class Tiff:
             if 'ZoomValue' in line:
                 metadata_dict['zoom_factor'] = float(line_value)
             if '[Reference Image Parameter] WidthConvertValue' in line:
-                metadata_dict['pixel_width'] = float(line_value)
+                metadata_dict['pixels_per_unit_width'] = float(line_value)
             if '[Reference Image Parameter] WidthUnit' in line:
                 metadata_dict['width_unit'] = line_value
             if '[Reference Image Parameter] HeightConvertValue' in line:
-                metadata_dict['pixel_height'] = float(line_value)
+                metadata_dict['pixels_per_unit_height'] = float(line_value)
             if '[Reference Image Parameter] HeightUnit' in line:
                 metadata_dict['height_unit'] = line_value
         
@@ -264,16 +266,17 @@ class Tiff:
                 date (datetime): Time of acquisition.
                 file_size (int): Size of tiff in bytes.
                 dimension_order (str): Dimension order.
-                pixel_width (float): width of pixels in units from width_unit.
+                pixels_per_unit_width (float): width of pixels in units from width_unit.
                 width_unit (str): units used to define width of pixels.
-                pixel_height (float): height of pixels in units from width_unit.
+                pixels_per_unit_height (float): height of pixels in units from width_unit.
                 height_unit (str): units used to define height of pixels.
         """
         # Check if the metadata has already been parsed and saved.
-        tiff_metadata_dict = get_tiff_metadata_dict()
-        metadata = tiff_metadata_dict.get(self.path)
-        if metadata is not None:
-            return metadata
+        if not self.reload_cache:
+            tiff_metadata_dict = get_tiff_metadata_dict()
+            metadata = tiff_metadata_dict.get(self.path)
+            if metadata is not None:
+                return metadata
 
         # If it isn't, parse it and save it.
         if self.is_scanimage:
@@ -325,7 +328,14 @@ class Tiff:
         stack = xr.DataArray(data=stack, dims=dims)
 
         t_coords = np.arange(0, stack.sizes['T']) / self.metadata['volume_rate']
-        stack.assign_coords(T=t_coords)
+        z_coords = None
+        y_coords = np.arange(0, stack.sizes['Y']) / self.metadata['pixels_per_unit_height']
+        x_coords = np.arange(0, stack.sizes['X']) / self.metadata['pixels_per_unit_width']
+
+        stack = stack.assign_coords(T=t_coords, Y=y_coords, X=x_coords)
+        stack.Y.attrs["units"] = self.metadata['height_unit']
+        stack.X.attrs["units"] = self.metadata['width_unit']
+
 
         stack.attrs["long_name"] = "Raw Florescence"
 
