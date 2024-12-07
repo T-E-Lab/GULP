@@ -1,12 +1,14 @@
 # --- User data table ---
 # This file contains the root folder(s) of the live fly data for every lab member.
 
-# This information is used to: 
+# This information is used to:
+# - Cache tiff metadata
 # - Categorize data by its procurer when plotting
 # - Generate video summaries of the trials (not yet implemented)
 
 # -- Instructions --
 # Please add the paths to any data (tiff files) you would like to process with GULP.
+# If possible, do not include unrelated tiffs as they will also be cached. The caching process can take a lot of time initially if there are a lot of tiffs.
 # Do not include paths to behavioral data files, they are automatically saved to the NAS, and matched to the appropriate tiff during processing.
 # ------------------
 
@@ -23,6 +25,7 @@
 # Cole's data
 - member: Cole R. K. Harder
   data_dirs:
+    - Z:\2PImaging\Cole
 
 # Michael's data
 - member: Michael Payne

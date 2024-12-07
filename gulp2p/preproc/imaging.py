@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import xarray as xr
 from skimage.registration import phase_cross_correlation
 from scipy.ndimage import fourier_shift, gaussian_filter
 import math
@@ -146,8 +147,27 @@ def get_mc_obj_params(mc):
 
     raise NotImplementedError
 
+def apply_motion_correction(stack, mc_obj):
+    tempdir = tempfile.TemporaryDirectory()
+
+    # Save stack to temp file to pass to MotionCorrect
+    temp_stack_file = Path(tempdir.name, "stack.hdf5")
+    stack_movie = cm.movie(stack.to_numpy(), file_name=temp_stack_file.name)
+    stack_movie.save(temp_stack_file)
+
+    # TODO: Create new MotionCorrect object with settings from mc_obj
+    stack_mc = mc_obj.apply_shifts_movie(temp_stack_file)
+    tempdir.cleanup()
+    return stack_mc
+
 def motion_correct(stack, mc_params=None):
     # Stack must be 3 dimensional (T,Y,X)
+
+    # If stack contains multiple channels, use the first one for motion correction
+    if stack.sizes['C'] > 1:
+        reference_channel = stack.sel(C=0)
+    else:
+        reference_channel = stack.squeeze()
 
     default_mc_params = {
         'strides': (48, 48),       # maximum allowed rigid shift in pixels (view the movie to get a sense of motion)
@@ -156,7 +176,7 @@ def motion_correct(stack, mc_params=None):
         'max_deviation_rigid': 3,  # maximum deviation allowed for patch with respect to rigid shifts
         'pw_rigid': False,         # flag for performing rigid or piecewise rigid motion correction
         'shifts_opencv': True,     # flag for correcting motion using bicubic interpolation (otherwise FFT interpolation is used)
-        'border_nan': 'copy',       # replicate values along the boundary (if True, fill in with NaN) [True, False 'min', 'copy']
+        'border_nan': 'copy',      # replicate values along the boundary (if True, fill in with NaN) [True, False 'min', 'copy']
         }
 
     # Add default values to unspecified mc_params
@@ -167,7 +187,7 @@ def motion_correct(stack, mc_params=None):
             if key not in mc_params.keys():
                 mc_params[key] = value
 
-    if stack.shape[0] < 30:
+    if reference_channel.sizes['T'] < 30:
         logger.debug("stack is too small for default split size, setting it to 1")
         mc_params['splits_els'] = 1
         mc_params['splits_rig'] = 1
@@ -179,29 +199,39 @@ def motion_correct(stack, mc_params=None):
 
     # Set environment variables so caiman stores mmap files in temp directory instead of current directory.
     # TODO: Save existing value of environment variables and re-set them after
-    tempdir = tempfile.TemporaryDirectory()
-    os.environ['CAIMAN_NEW_TEMPFILE'] = "True"
-    os.environ['CAIMAN_TEMP'] = tempdir.name
+    with tempfile.TemporaryDirectory() as tempdir:
+        os.environ['CAIMAN_NEW_TEMPFILE'] = "True"
+        os.environ['CAIMAN_TEMP'] = tempdir
 
-    # Save stack to temp file to pass to MotionCorrect
-    temp_stack_file = Path(tempdir.name, "stack.hdf5")
-    stack_movie = cm.movie(stack, file_name=temp_stack_file.name)
-    stack_movie.save(temp_stack_file)
+        # Save stack to temp file to pass to MotionCorrect
+        temp_stack_file = Path(tempdir, "stack.hdf5")
+        stack_movie = cm.movie(reference_channel.to_numpy(), file_name=temp_stack_file.name)
+        stack_movie.save(temp_stack_file)
 
-    # Create motion correction object
-    mc = MotionCorrect(temp_stack_file, dview=dview, **mc_params)
+        # Create motion correction object
+        mc = MotionCorrect(temp_stack_file, dview=dview, **mc_params)
 
-    # correct for rigid motion correction
-    mc.motion_correct()
-    mc_obj = mc
+        # correct for rigid motion correction
+        mc.motion_correct()
+        mc_obj = mc
 
-    # Copy reshaped stack_mmap so that mmapped file can be deleted
-    stack_mc = mc.apply_shifts_movie(temp_stack_file)
+        # Copy reshaped stack_mmap so that mmapped file can be deleted
+        motion_corrected_reference = mc.apply_shifts_movie(temp_stack_file)
 
-    cm.stop_server(dview=dview) # stop the server
-    mc_obj.dview = None # Remove pool object from mc so it can be pickled.
+        cm.stop_server(dview=dview) # stop the server
+        mc_obj.dview = None # Remove pool object from mc so it can be pickled.
 
-    tempdir.cleanup()
+    if stack.sizes['C'] > 1:
+        # Apply computed shifts to the other channels
+        dims = tuple(dim for dim in stack.dims if dim != 'C')
+        channels_mc = [np.array(motion_corrected_reference)]
+        for ch_idx in range(1, stack.sizes['C']):
+            motion_corrected_channel = apply_motion_correction(stack.sel(C=ch_idx), mc_obj)
+            channels_mc.append(np.array(motion_corrected_channel))
+        stack_mc = stack.copy(data=np.stack(channels_mc, axis=1))
+    else:
+        stack_mc = motion_corrected_reference
+
     del os.environ['CAIMAN_NEW_TEMPFILE']
     del os.environ['CAIMAN_TEMP']
 
@@ -337,7 +367,7 @@ def get_rois(mip_stack, roi_func, old_rois, old_type):
                          colormap=CONFIG_DICT['napari_colormap'],
                          gamma=CONFIG_DICT['napari_gamma'])
 
-    viewer.add_image(mip_stack.mean(axis=0),
+    viewer.add_image(mip_stack.mean(dim='T'),
                      colormap=CONFIG_DICT['napari_colormap'],
                      gamma=CONFIG_DICT['napari_gamma'])
     initial_rois = None
@@ -346,13 +376,16 @@ def get_rois(mip_stack, roi_func, old_rois, old_type):
         initial_rois = old_rois
         initial_shape_type = old_type
     viewer.add_shapes(initial_rois, shape_type=initial_shape_type,
-                      name='Shapes', opacity=CONFIG_DICT['napari_shape_opacity'])
+                      ndim=3, name='Shapes',
+                      opacity=CONFIG_DICT['napari_shape_opacity'])
+
+    viewer.dims.axis_labels = mip_stack.dims
     napari.run()
 
     # Use the ROIs that were drawn in napari to get image masks
-    [_, rois, masks] = roi_func(viewer, mip_stack.mean(axis=0))
+    rois, masks = roi_func(viewer, mip_stack.sizes)
 
-    return [_, rois, masks]
+    return rois, masks
 
 def create_dist_array(shapely_rois):
     # Create 2d array of distances
@@ -413,10 +446,13 @@ def get_best_path_idx(shapely_rois):
         return sorted_path[::-1]
 
 def get_sorted_rois(rois, masks):
-    shapely_rois = [geo.Polygon(roi) for roi in rois]
-    best_path_idx = get_best_path_idx(shapely_rois)
-    sorted_rois = [rois[idx] for idx in best_path_idx]
-    sorted_masks = [masks[idx] for idx in best_path_idx]
+    sorted_rois = []
+    sorted_masks = []
+    for ch_rois in rois:
+        shapely_rois = [geo.Polygon(roi) for roi in ch_rois]
+        best_path_idx = get_best_path_idx(shapely_rois)
+        sorted_rois.append([ch_rois[idx] for idx in best_path_idx])
+        sorted_masks.append([masks[idx] for idx in best_path_idx])
     return sorted_rois, sorted_masks
 
 def f_from_rois_div(stack, all_masks):
@@ -439,7 +475,7 @@ def f_from_rois_div(stack, all_masks):
 
     return rawF
 
-def get_raw_flor(stack, masks, frame_dim=0):
+def get_raw_flor(stack, masks, correct_negative_flor=True):
     """Calculate the raw fluorescence in each ROI in all ROIS on the given stack
 
     Args:
@@ -451,66 +487,78 @@ def get_raw_flor(stack, masks, frame_dim=0):
         NDArray[float64]: ndarray raw florescence per frame and roi. shape = (# of frames, # of ROI's)
     """
 
-    # Initialize the array to hold the fluorescence data
-    raw_flor = np.zeros((stack.shape[frame_dim], len(masks)))
+    # raw_flor = xr.DataArray(data=np.zeros((stack.sizes['T'], len(masks))),
+    #                         dims=['T', 'C', 'roi'])
+    # Initialize array to hold the fluorescence data
+    raw_flor = []
+    offset = 0
+    if correct_negative_flor:
+        min_flor = None
+        for ch_idx in range(stack.sizes['C']):
+            if min_flor is None:
+                min_flor = stack.sel(C=ch_idx).min()
+            else:
+                min_flor = min(stack.sel(C=ch_idx).min(), min_flor)
+        if min_flor < 0:
+            offset = -1 * abs(min_flor)
+
+    for ch_idx in range(stack.sizes['C']):
+        channel_raw_flor = xr.DataArray(data=np.zeros(shape=(len(masks[ch_idx]), stack.sizes['T'])),
+                                        dims=['roi', 'T'])
+        for roi_idx, mask in enumerate(masks[ch_idx]):
+            masked_stack = stack.sel(C=ch_idx) * mask
+            flor = masked_stack.sum(dim=['Y', 'X'])
+
+            # https://docs.xarray.dev/en/latest/user-guide/indexing.html#assigning-values-with-indexing
+            channel_raw_flor[dict(roi=roi_idx)] = flor + offset
+        raw_flor.append(channel_raw_flor)
+
+    # for ch_idx in range(stack.sizes['C']):
+
 
     # Step through each frame in the stack
     # https://stackoverflow.com/questions/1589706/iterating-over-arbitrary-dimension-of-numpy-array
-    for fm_idx, frame in enumerate(np.moveaxis(stack, frame_dim, 0)):
-        # Find the sum of the fluorescence in each ROI for the given frame
-        for roi_idx in range(0, len(masks)):
-            raw_flor[fm_idx, roi_idx] = np.multiply(np.squeeze(frame), masks[roi_idx].T).sum()
+    # for fm_idx, frame in enumerate(stack.transpose('T', ...)):
+    #     # Find the sum of the fluorescence in each ROI for the given frame
+    #     for roi_idx in range(0, len(masks)):
+    #         raw_flor[fm_idx, roi_idx] = np.multiply(np.squeeze(frame), masks[roi_idx].T).sum()
 
     return raw_flor
 
-def get_delta_flor(raw_flor):
-    """ Calculate the DF/F given a raw fluorescence signal
-    The baseline fluorescence is the mean of the lowest 10% of fluorescence signals
-    """
-
-    # Initialize the array to hold the DF/F data
-    delta_flor = np.zeros(raw_flor.shape)
-
-    # Correct for negative rawf
-    min_rawf = np.min(raw_flor)
-    if min_rawf < 0:
-        raw_flor += abs(min_rawf)
-
-    # Calculate the DF/F for each ROI
-    for roi in range(0,raw_flor.shape[1]):
-        baseline_flor = np.sort(raw_flor[:,roi])[0:round(0.1*raw_flor.shape[0])].mean()
-        delta_flor[:,roi] = (raw_flor[:,roi]/baseline_flor)-1
-
-    return delta_flor
-
-def get_delta_flor_from_first_fms(rawF, fm_interval, baseline_sec=10):
-    """Calculate the DF/F given a raw fluorescence signal
-    The baseline fluorescence is the mean of first 10 seconds of florescence
+def get_delta_flor(raw_flor, baseline_sec=None):
+    """Calculate the DF/F given a raw fluorescence signal.
+    Method used depends on value of baseline_sec.
+    If None:
+        The baseline fluorescence is the mean of the lowest 10% of fluorescence signals.
+    Else:
+        The baseline fluorescence is the mean of the first baseline_sec seconds.
 
     Args:
-        rawF (NDArray[float64]): ndarray of raw florescence over frame and roi.
-                                 shape = (# of frames, # of ROI's)
-        fm_interval (float): Time it takes to capture one frame (in seconds per frame)
-        baseline_sec (float): How long into the trial to get the baseline from
+        raw_flor (List[xarray.DataArray]): list of raw fluorescence per channel. Each channel has dimensions (T, roi).
+        baseline_sec (float, optional): If baseline_sec is None, mean of lowest 10% of fluorescence signals is used as the baseline.
+                                        If baseline_sec is set to a time t, the mean of the first t seconds is used as the baseline.
+                                        Defaults to None.
 
     Returns:
-        NDArray[float64]: ndarray of delta florescence over baseline florescence per frame and roi.
-                          shape = (# of frames, # of ROI's)
+        List[xarray.DataArray]: List of delta fluorescence per channel. Each channel has dimensions (T, roi).
     """
 
     # Initialize the array to hold the DF/F data
-    DF = np.zeros(rawF.shape)
+    delta_flor = []
+    for ch_idx, channel_raw_flor in enumerate(raw_flor):
+        channel_delta_flor = xr.zeros_like(channel_raw_flor)
+        for roi_idx, roi_raw_flor in enumerate(channel_raw_flor):
+            logger.debug(f"channel_raw_flor.sizes: {channel_raw_flor.sizes}")
+            if baseline_sec is None:
+                # Use mean of bottom 10% of fluorescence signals as baseline
+                baseline_flor = roi_raw_flor.isel(T=slice(0, round(0.1*roi_raw_flor.sizes['T']))).mean()
+            else:
+                # Use mean of first baseline_sec seconds as baseline
+                baseline_flor = roi_raw_flor.sel(T=slice(0, baseline_sec)).mean()
+            channel_delta_flor[dict(roi=roi_idx)] = (roi_raw_flor / baseline_flor) - 1
+        delta_flor.append(channel_delta_flor)
 
-    # rawF axes: [frames, rois]
-    baseline_sec = 10
-    baseline_end_frame = round(baseline_sec / fm_interval)
-
-    # Calculate the DF/F for each ROI
-    for r in range(0, rawF.shape[1]):
-        Fbaseline = rawF[0:baseline_end_frame, r].mean()
-        DF[:, r] = rawF[:, r] / Fbaseline - 1
-
-    return DF
+    return delta_flor
 
 def preprocess(path, tiff=None, bhv_paths=None, prev_rois=None, save=True, skip=False, use_full_volume=False):
     """Draw rois over brain regions in napari.
@@ -535,6 +583,7 @@ def preprocess(path, tiff=None, bhv_paths=None, prev_rois=None, save=True, skip=
         tiff = Tiff(path)
     stack = tiff.stack
 
+    # TODO: Reimplement with multi-channel functionality
     # Load old trials info
     old_trial = utils.load_trial(tiff)
     if old_trial is not None:
@@ -543,10 +592,13 @@ def preprocess(path, tiff=None, bhv_paths=None, prev_rois=None, save=True, skip=
         slices = old_trial.slices
 
     # Load bhv object and concatenate if there are multiple
-    uvr = behavior.load_bhv_data(bhv_paths)
-    if uvr.nidDf.empty:
-        logger.info("loading bhv file from json (skipping pickle since it is missing nidaq signal)")
-        uvr = behavior.load_bhv_data(bhv_paths, from_pickle=False)
+    if bhv_paths is not None:
+        uvr = behavior.load_bhv_data(bhv_paths)
+        if uvr.nidDf.empty:
+            logger.info("loading bhv file from json (skipping pickle since it is missing nidaq signal)")
+            uvr = behavior.load_bhv_data(bhv_paths, from_pickle=False)
+    else:
+        logger.info(f"no bhv files found/given, only processing image.")
 
     # Plot the mean of each plane
     fig_mean_planes = plot_mean_plane(stack, col=0) # col=1 to plot the second channel if it exists
@@ -561,31 +613,21 @@ def preprocess(path, tiff=None, bhv_paths=None, prev_rois=None, save=True, skip=
             logger.info(f"Using slices: {slices}")
 
     # Calculate the MIP
-    mip_stack = stack_to_mip(stack,slices)
+    mip_stack = tiff.get_mip_stack()
 
     # Motion correct the MIP
     if hasattr(old_trial, 'mc_obj') and (old_trial.mc_obj is not None):
         logger.info("Motion correction has already been computed, applying shifts")
-
-        tempdir = tempfile.TemporaryDirectory()
-
-        # Save mip_stack to temp file to pass to MotionCorrect
-        temp_stack_file = Path(tempdir.name, "mip_stack.hdf5")
-        stack_movie = cm.movie(mip_stack, file_name=temp_stack_file.name)
-        stack_movie.save(temp_stack_file)
-
         mc_obj = old_trial.mc_obj
-        # TODO: Create new MotionCorrect object with settings from mc_obj
-        stack_mc = mc_obj.apply_shifts_movie(temp_stack_file)
-        tempdir.cleanup()
+        stack_mc = apply_motion_correction(stack=mip_stack, mc_obj=mc_obj)
     else:
         stack_mc, mc_obj = motion_correct(mip_stack)
 
     # Plot the before and after
     fig, axs = plt.subplots(ncols = 2, nrows = 1, figsize = (6,2))
-    axs[0].imshow(mip_stack.mean(axis=0))
+    axs[0].imshow(mip_stack.mean(dim=['T', 'C']))
     axs[0].axis('off')
-    axs[1].imshow(stack_mc.mean(axis=0))
+    axs[1].imshow(stack_mc.mean(dim=['T', 'C']))
     axs[1].axis('off')
 
     if skip:
@@ -601,8 +643,8 @@ def preprocess(path, tiff=None, bhv_paths=None, prev_rois=None, save=True, skip=
         elif prev_rois is not None:
             initial_rois = prev_rois
             initial_roi_type = 'polygon'
-        [_, rois, masks] = get_rois(stack_mc, preproc.draw.PolyROIs,
-                                    initial_rois, initial_roi_type)
+        rois, masks = get_rois(stack_mc, preproc.draw.PolyROIs,
+                               initial_rois, initial_roi_type)
 
     # Sort ROIs based on their position
     rois, masks = get_sorted_rois(rois, masks)
@@ -614,41 +656,51 @@ def preprocess(path, tiff=None, bhv_paths=None, prev_rois=None, save=True, skip=
     delta_flor = get_delta_flor(raw_flor)
 
     # Syncronize behavioral and imaging data
-    if not uvr.nidDf.empty:
-        fpv = tiff.metadata.get('SizeZ')
-        [imgInd, volFramePos] = align2img.findImgFrameTimes(uvr, fpv=fpv)
-        if len(volFramePos) == 0: # Check if list is empty
-            logger.warning("No nidaq frame signal found, unable to sync behavior and image data.")
-        imgDat = pd.DataFrame(delta_flor).add_prefix("roi")
-        synced_df = align2img.combineImagingAndPosDf(imgDat, uvr.posDf, volFramePos)
+    if bhv_paths is not None:
+        if not uvr.nidDf.empty:
+            fpv = tiff.metadata.get('SizeZ')
+            [imgInd, volFramePos] = align2img.findImgFrameTimes(uvr, fpv=fpv)
+            if len(volFramePos) == 0: # Check if list is empty
+                logger.warning("No nidaq frame signal found, unable to sync behavior and image data.")
+            # TODO: Update to work with new shape of multichannel delta florescence
+            imgDat = pd.DataFrame(delta_flor).add_prefix("roi")
+            synced_df = align2img.combineImagingAndPosDf(imgDat, uvr.posDf, volFramePos)
+        else:
+            logger.warning("No nidaq data in unity vr data.")
+            synced_df = None
     else:
-        logger.warning("No nidaq data in unity vr data.")
         synced_df = None
 
     # TODO: make mip_frame, raw_flor, and delta_flor multichannel if image is multichannel.
-    trial = Trial(path = path,
-                  tiff_metadata = tiff.metadata,
-                  bhv_paths = bhv_paths,
-                  mip_frame = stack_mc.mean(axis=0),
-                  slices = slices,
-                  mc_obj = mc_obj,
-                  rois = rois,
-                  masks = masks,
-                  raw_flor = raw_flor,
-                  synced_df = synced_df)
+    trial_dict = {'path' = path,
+                  'tiff_metadata' = tiff.metadata,
+                  'bhv_paths' = bhv_paths,
+                  'mip_frame' = stack_mc.mean(dim=['T']),
+                  'slices' = slices,
+                  'mc_obj' = mc_obj,
+                  'rois' = rois,
+                  'masks' = masks,
+                  'raw_flor' = raw_flor,
+                  'synced_df' = synced_df}
 
     #TODO: Add overwrite protection
     # Pickle and save the data
     if save:
         logger.info("Saving trial")
-        utils.save_trial(trial)
+        utils.save_trial(trial_dict)
 
-    return trial
+    return Trial(**trial_dict)
 
-def process_all(path_list, save=True, skip=False, use_full_volume=False):
+def process_all(path_list, save=True, skip=False, use_full_volume=False, with_bhv=True):
     prev_rois=None
-    bhv_paths = utils.get_bhv_paths(path_list)
+    if with_bhv:
+        bhv_paths = utils.get_bhv_paths(path_list)
+    else:
+        bhv_paths = []
     for index, path in enumerate(path_list):
-        trial = preprocess(path, prev_rois=prev_rois, bhv_paths=bhv_paths[index],
+        trial_bhv_paths = None
+        if len(bhv_paths) != 0:
+            trial_bhv_paths = bhv_paths[index]
+        trial = preprocess(path, prev_rois=prev_rois, bhv_paths=trial_bhv_paths,
                 save=save, skip=skip, use_full_volume=use_full_volume)
         prev_rois = trial.rois

@@ -14,8 +14,9 @@ import re
 import cv2
 import logging
 
-from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR, FICTRAC_DIR
+from gulp2p.preproc.trial import Trial
 from gulp2p.preproc.tiff import Tiff
+from gulp2p.config import TRIAL_PICKLE_DIR, BHV_DATA_RAW_DIR, FICTRAC_DIR, USER_DATA_DIRS
 
 logger = logging.getLogger(__name__)
 
@@ -452,20 +453,35 @@ def get_all_bhvs_df():
                          "timestamp": bhv_timestamp})
     return pd.DataFrame(df_dicts)
 
-def get_all_tiff_paths(trial_date=None):
+def get_all_tiff_paths(tiff_folders = None, trial_date=None):
     tiff_paths = []
-    # TODO: Update to read users tiff folders from yaml file.
-    tiff_folder = Path(r"Z:\2PImaging\Kerstin\MIMS")
-    for path in tiff_folder.rglob("*"):
-        if path.suffix != ".tif":
-            continue
-        if trial_date is not None:
-            tiff_datetime = get_datetime_from_string(path.name)
-            if tiff_datetime is None:
-                tiff_datetime = Tiff(path).metadata['date']
-            if tiff_datetime.date() != trial_date:
+    if tiff_folders is None:
+        tiff_folders = USER_DATA_DIRS
+    for tiff_folder in tiff_folders:
+        for path in tiff_folder.rglob("*"):
+            # Skip oif folders since tiffs inside are incomplete.
+            if ".oif.files" in str(path):
                 continue
-        tiff_paths.append(path)
+            if path.suffix != ".tif":
+                continue
+            if trial_date is not None:
+                tiff_datetime = get_datetime_from_string(path.name)
+                if tiff_datetime is None:
+                    try:
+                        metadata = Tiff(path).metadata
+                    except:
+                        continue
+                    # Skip tiffs with no metadata
+                    if len(metadata) == 0:
+                        continue
+                    # Skip tiffs with no date
+                    try:
+                        tiff_datetime = metadata['date']
+                    except KeyError:
+                        continue
+                if tiff_datetime.date() != trial_date:
+                    continue
+            tiff_paths.append(path)
     return tiff_paths
 
 def get_coverage_df(tiffs, bhvs_df, bhv_window=12):
@@ -548,22 +564,28 @@ def get_bhv_paths(tiff_paths):
         bhv_data_folder (Path): Path to behavioral data folder
 
     Returns:
-        list[Path]: Paths of behavioral data files that overlapped.
+        list[Path] | None: Paths of behavioral data files that overlapped, None if there were no behavioral files.
     """
 
     # Use tiffs from that day to align bhv files
     tiff_paths_to_align = tiff_paths
     if len(tiff_paths) == 1:
-        try:
-            tiff_date = get_datetime_from_string(tiff_paths[0].name).date()
-        except:
-            tiff_date = get_datetime_from_string(tiff_paths[0].as_posix()).date()
-        tiff_paths_to_align = get_all_tiff_paths(trial_date=tiff_date)
+        tiff_datetime = get_datetime_from_string(tiff_paths[0].name)
+        if tiff_datetime is None:
+            tiff_datetime = get_datetime_from_string(tiff_paths[0].as_posix())
+        if tiff_datetime is None:
+            tiff_datetime = Tiff(tiff_paths[0]).metadata['date']
+        tiff_paths_to_align = get_all_tiff_paths(trial_date=tiff_datetime.date())
 
+    if tiff_paths_to_align is None:
+        return
 
     tiffs = [Tiff(path) for path in tiff_paths_to_align]
     bhvs_df = get_all_bhvs_df()
     coverage_df = get_coverage_df(tiffs, bhvs_df)
+    # Return empty list if there are no behavioral files that overlap.
+    if coverage_df.empty:
+        return []
     offset = coverage_df.loc[coverage_df['coverage'].idxmax(), "shift"]
 
     # Use best shift to find nearest bhv for each tiff.
@@ -639,5 +661,6 @@ def load_trial(tiff):
         logger.info(f"trial not processed: {tiff.path}")
         return None
     with open(pickle_path, 'rb') as file:
-        trial = pickle.load(file)
+        trial_dict = pickle.load(file)
+        trial = Trial(**trial_dict)
     return trial

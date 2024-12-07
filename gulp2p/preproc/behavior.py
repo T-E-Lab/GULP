@@ -95,7 +95,7 @@ def get_bhv_data(path, from_pickle=True):
         if Path(bhv_pickle_path).exists():
             return pd.read_pickle(bhv_pickle_path)
         else:
-            print("Could not find preprocessed behavior data, parsing it now.")
+            logger.info("Could not find preprocessed behavior data, parsing it now.")
     
     uvr = parse_bhv_data(path)
     with open(bhv_pickle_path, "wb") as file:

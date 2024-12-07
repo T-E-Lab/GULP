@@ -54,3 +54,11 @@ BHV_DATA_RAW_DIR = Path(MAIN_BHV_DATA_DIR, "raw data")
 BHV_DATA_PICKLE_DIR = Path(MAIN_BHV_DATA_DIR, "pickles")
 
 FICTRAC_DIR = Path(CONFIG_DICT['fictrac_dir'])
+
+USER_DATA_TABLE = CONFIG_DICT['user_data_table']
+
+# Store are data directories in a list
+all_data_dirs = []
+for item in USER_DATA_TABLE:
+    all_data_dirs += item['data_dirs']
+USER_DATA_DIRS = map(Path, all_data_dirs)

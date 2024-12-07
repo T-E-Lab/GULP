@@ -24,14 +24,17 @@ class Trial():
         self.name = path.stem
         self.bhv_paths = bhv_paths
         self.tiff_metadata = tiff_metadata
-        self.mip_frame = mip_frame
         self.slices = slices
-        self.mc_obj = mc_obj
-        self.rois = rois
-        self.masks = masks
-        self.raw_flor = raw_flor
-        self.synced_df = synced_df
         self.rois_per_arm = rois_per_arm
+        self.synced_df = synced_df # update to include column for each channel
+
+        self.channels = []
+
+        self.mip_frame = mip_frame # 1 per channel (can allow multiple channels in stack)
+        self.mc_obj = mc_obj # 1 per channel? or just use both channels to create it
+        self.rois = rois # 1 per channel
+        self.masks = masks # 1 per channel
+        self.raw_flor = raw_flor # 1 per channel
 
     def get_metadata_length(self):
         length = self.tiff_metadata['length']
@@ -50,7 +53,7 @@ class Trial():
     @property
     def num_rois(self):
         return len(self.rois)
-    
+
     @property
     def deltaf(self):
         return np.array(self.synced_df.iloc[:, 0:self.num_rois])

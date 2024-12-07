@@ -44,13 +44,17 @@ class Tiff:
         load_stack(self) -> np.ndarray
     """
     def __init__(self, path, reload_cache=False) -> None:
-        """Constructor to create Tiff object.
+        """Constructor to create Tiff object. Metadata is cached.
 
         Args:
             path (os.PathLike): Path to tiff file.
+            reload_cache (bool, optional): Updates cached metadata if True . Defaults to False.
         """
+        
         self.path = PurePath(path)
         self.reload_cache = reload_cache
+
+        logger.debug(f"tiff object created: {self.path}", stacklevel=2)
 
 
     @cached_property
@@ -77,7 +81,7 @@ class Tiff:
         Returns:
             dict: Dictionary of metadata.
         """
-        logger.info("Parsing scanimage metadata")
+        logger.debug("Parsing scanimage metadata")
         # Step through the metadata, extracting relevant parameters
         metadata_dict = {}
         for line in self.scanimage_metadata.split('\n'):
@@ -176,11 +180,17 @@ class Tiff:
         Returns:
             dict: Dictionary of metadata.
         """
+        logger.debug("Parsing scanimage metadata")
         with tf.TiffFile(self.path) as tiff:
             imagej_metadata = tiff.imagej_metadata
 
-        # TODO: Fix for when Info key is not in metadata (will need to pull dimension information from other keys like frames and images) 
         metadata_dict = {}
+
+        # TODO: Fix for when Info key is not in metadata (will need to pull dimension information from other keys like frames and images)
+        # Return empty dict if metadata is not found
+        if (imagej_metadata is None) or (imagej_metadata.get('Info') is None):
+            return metadata_dict
+        
         for line in imagej_metadata['Info'].splitlines():
             line_value = line.split('=')[-1].strip()
             # Dimension info
@@ -204,7 +214,7 @@ class Tiff:
                 metadata_dict['date'] = datetime.fromisoformat(date_str)
             if 'TotalFileSize' in line:
                 metadata_dict['file_size'] = int(line_value)
-            
+
             # Imaging parameters
             if 'ZoomValue' in line:
                 metadata_dict['zoom_factor'] = float(line_value)
@@ -216,16 +226,22 @@ class Tiff:
                 metadata_dict['pixel_height'] = float(line_value)
             if '[Reference Image Parameter] HeightUnit' in line:
                 metadata_dict['height_unit'] = line_value
-        
-        frame_interval = float(imagej_metadata['finterval'])
-        metadata_dict['frame_interval'] = frame_interval
-        metadata_dict['frame_rate'] = 1 / frame_interval
+
+        try:
+            frame_interval = float(imagej_metadata['finterval'])
+            metadata_dict['frame_interval'] = float(frame_interval)
+            metadata_dict['frame_rate'] = 1 / float(frame_interval)
+        except KeyError:
+            pass
 
         # Calculate length
-        metadata_dict['length'] = (metadata_dict['SizeZ']
-                                   * metadata_dict['SizeC']
-                                   * metadata_dict['SizeT']
-                                   * metadata_dict['frame_interval'])
+        try:
+            metadata_dict['length'] = (metadata_dict['SizeZ']
+                                    * metadata_dict['SizeC']
+                                    * metadata_dict['SizeT']
+                                    * metadata_dict['frame_interval'])
+        except KeyError:
+            pass
 
         # Assume no flyback frames if not in scanimage format
         metadata_dict['discard_fb_frames'] = False
@@ -234,6 +250,12 @@ class Tiff:
         metadata_dict['flyback_time'] = None
         metadata_dict['laser_power'] = None
         metadata_dict['pixel_bin_factor'] = None
+
+        # Set date if it failed to find it in tiff metadata
+        if metadata_dict.get('date') is None:
+            file_stats = Path(self.path).stat()
+            ctime = file_stats.st_ctime
+            metadata_dict['date'] = datetime.fromtimestamp(ctime)
 
         return metadata_dict
 
@@ -330,7 +352,7 @@ class Tiff:
         # Convert stack to xarray object
         dims = tuple(dim for dim in self.metadata['dimension_order'])
         stack = xr.DataArray(data=stack, dims=dims)
-        
+
         # Discard the flyback frames
         if discard_fb_frames:
             stack = stack.sel(Z=slice(0, size_z-num_fb_frames))
@@ -347,7 +369,7 @@ class Tiff:
         logger.debug(f"z_coords: {z_coords}")
         y_coords = np.arange(0, stack.sizes['Y']) * self.metadata['pixel_height']
         x_coords = np.arange(0, stack.sizes['X']) * self.metadata['pixel_width']
-        
+
         stack = stack.assign_coords(T=t_coords, Z=z_coords, Y=y_coords, X=x_coords)
         if z_coords is not None:
             stack.Z.attrs["units"] = 'um'
@@ -384,10 +406,9 @@ class Tiff:
     @cache
     def get_mip_stack(self, motion_correct=False):
         from gulp2p.preproc import imaging
-        zaxis = self.get_dim_axis('Z')
-        mip_stack = np.squeeze(np.max(self.stack, axis=zaxis))
+        mip_stack = self.stack.max(dim='Z')
         if motion_correct:
-            mip_stack, template = imaging.motion_correct_mip(mip_stack)
+            mip_stack, template = imaging.motion_correct(mip_stack)
         return mip_stack
 
     def get_creation_date(self):
